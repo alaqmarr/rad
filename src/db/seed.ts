@@ -331,15 +331,17 @@ async function seed() {
     if (row) brandMap[b.slug] = row.id;
   }
 
-  // 6. Product Catalog (Taparia Tools + Radiant Fan Safety Net Covers, non-destructive upsert)
+  // 6. Product Catalog (Taparia Tools + Radiant Fan Safety Net Covers + Siddhi Security/Detection, non-destructive upsert)
   void categoryMap;
   void products;
   const { replaceCatalogWithTapariaPdf } = await import("./taparia-catalog");
   const tapariaResult = await replaceCatalogWithTapariaPdf({ clearExisting: false });
   const { loadRadiantFanNetProducts } = await import("./radiant-fan-nets");
   const fanNetResult = await loadRadiantFanNetProducts();
+  const { loadSiddhiProducts } = await import("./siddhi-products");
+  const siddhiResult = await loadSiddhiProducts();
   console.log(
-    `Loaded Taparia catalog (${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated; Taparia brand ID: ${brandMap["taparia"] ?? "auto"}) + Radiant Fan Safety Nets (${fanNetResult.insertedCount} inserted, ${fanNetResult.updatedCount} updated; total: ${fanNetResult.totalProductsAfter}).`
+    `Loaded Taparia (${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated; Taparia brand ID: ${brandMap["taparia"] ?? "auto"}) + Radiant Fan Nets (${fanNetResult.insertedCount} inserted, ${fanNetResult.updatedCount} updated) + Siddhi (${siddhiResult.insertedCount} inserted, ${siddhiResult.updatedCount} updated; total: ${siddhiResult.totalProductsAfter}).`
   );
 
   // 7. Starter Documents
