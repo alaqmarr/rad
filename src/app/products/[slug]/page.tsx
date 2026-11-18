@@ -8,6 +8,7 @@ import { getSiteSettings } from "@/lib/settings";
 import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
+import { ProductFallbackVisual } from "@/components/ProductFallbackVisual";
 import type { SpecRow } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -164,7 +165,7 @@ export default async function ProductDetailPage({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left: Product Media */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="aspect-[4/3] w-full rounded-lg border border-stone-200 bg-[#0F141A] overflow-hidden flex items-center justify-center relative">
+            <div className="aspect-[4/3] w-full rounded-lg border border-stone-200 bg-[#141A21] overflow-hidden flex items-center justify-center relative">
               {product.primaryImageUrl ? (
                 <img
                   src={product.primaryImageUrl}
@@ -172,18 +173,13 @@ export default async function ProductDetailPage({
                   className="h-full w-full object-contain bg-white p-4"
                 />
               ) : (
-                <>
-                  <img
-                    src={division?.heroImageUrl || "/images/div-industrial.jpg"}
-                    alt={product.name}
-                    className="h-full w-full object-cover opacity-55"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#0F141A] via-[#0F141A]/40 to-transparent" />
-                  <div className="absolute bottom-5 left-5 right-5 text-white">
-                    <div className="font-mono text-xs text-[#EA6A12]">{product.sku}</div>
-                    <div className="text-sm font-semibold mt-0.5">{brand?.name || division?.name}</div>
-                  </div>
-                </>
+                <ProductFallbackVisual
+                  name={product.name}
+                  sku={product.sku}
+                  brandName={brand?.name}
+                  categoryName={category?.name || division?.name}
+                  variant="detail"
+                />
               )}
             </div>
 

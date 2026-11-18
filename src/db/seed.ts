@@ -313,16 +313,40 @@ async function seed() {
     { slug: "unbrako", name: "Unbrako", countryOfOrigin: "India / Global", isFeatured: false, sortOrder: 28, description: "High-tensile 10.9 & 12.9 socket head cap screws, hex bolts, and alloy fasteners." },
     { slug: "lt-valves", name: "L&T Valves", countryOfOrigin: "India", isFeatured: false, sortOrder: 29, description: "Industrial ball valves, gate valves, globe valves, and butterfly flow-control valves." },
     { slug: "stanley-black-decker", name: "Stanley Tools", countryOfOrigin: "USA", isFeatured: false, sortOrder: 30, description: "Mechanics tool sets, measuring tapes, utility knives, and workshop storage." },
+    {
+      slug: "radiant",
+      name: "Radiant",
+      countryOfOrigin: "India",
+      isFeatured: true,
+      sortOrder: 0,
+      description: "Radiant Industrial Co. house-brand industrial workplace safety covers, custom netting guards, and MRO safety solutions.",
+      sourcingType: "in_house",
+      sourcingNote: "Radiant house-brand industrial safety and MRO product line supplied directly by Radiant Industrial Co.",
+    },
+    {
+      slug: "siddhi",
+      name: "Siddhi",
+      countryOfOrigin: "India",
+      isFeatured: true,
+      sortOrder: 31,
+      description: "Industrial conveyor metal detectors, handheld security/veterinary/gutka pouch detectors, walk-through door frames, boom barriers, and entrance turnstiles.",
+    },
   ];
 
   const brandMap: Record<string, number> = {};
   for (const b of brandSeeds) {
+    const { sourcingType, sourcingNote, ...brandCore } = b as typeof b & {
+      sourcingType?: string;
+      sourcingNote?: string;
+    };
     await db
       .insert(brands)
       .values({
-        ...b,
-        sourcingType: "independent",
-        sourcingNote: "We are not an official authorized dealer yet; we source genuine items directly against your order.",
+        ...brandCore,
+        sourcingType: sourcingType || "independent",
+        sourcingNote:
+          sourcingNote ||
+          "We are not an official authorized dealer yet; we source genuine items directly against your order.",
         seoTitle: `${b.name} Wholesale Supply | Radiant Industrial Co.`,
         seoDescription: `Source genuine ${b.name} products in India through Radiant Industrial Co.`,
       })
@@ -331,18 +355,10 @@ async function seed() {
     if (row) brandMap[b.slug] = row.id;
   }
 
-  // 6. Product Catalog (Taparia Tools + Radiant Fan Safety Net Covers + Siddhi Security/Detection, non-destructive upsert)
+  // 6. Product catalog is managed via Admin UI / CSV Import (existing DB products are preserved).
   void categoryMap;
   void products;
-  const { replaceCatalogWithTapariaPdf } = await import("./taparia-catalog");
-  const tapariaResult = await replaceCatalogWithTapariaPdf({ clearExisting: false });
-  const { loadRadiantFanNetProducts } = await import("./radiant-fan-nets");
-  const fanNetResult = await loadRadiantFanNetProducts();
-  const { loadSiddhiProducts } = await import("./siddhi-products");
-  const siddhiResult = await loadSiddhiProducts();
-  console.log(
-    `Loaded Taparia (${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated; Taparia brand ID: ${brandMap["taparia"] ?? "auto"}) + Radiant Fan Nets (${fanNetResult.insertedCount} inserted, ${fanNetResult.updatedCount} updated) + Siddhi (${siddhiResult.insertedCount} inserted, ${siddhiResult.updatedCount} updated; total: ${siddhiResult.totalProductsAfter}).`
-  );
+  void brandMap;
 
   // 7. Starter Documents
   const docSeeds = [

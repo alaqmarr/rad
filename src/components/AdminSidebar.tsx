@@ -28,7 +28,7 @@ export function AdminSidebar({ userEmail }: { userEmail: string }) {
   ];
 
   return (
-    <aside className="w-full lg:w-64 shrink-0 border-b lg:border-b-0 lg:border-r border-[#E4E4E0] bg-[#141A21] text-stone-200 flex flex-col justify-between">
+    <aside className="w-full lg:w-64 shrink-0 lg:sticky lg:top-0 lg:self-start lg:h-screen lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-[#E4E4E0] bg-[#141A21] text-stone-200 flex flex-col justify-between">
       <div>
         <div className="p-5 border-b border-stone-800">
           <Link href="/" className="inline-block bg-white rounded px-2.5 py-1.5 mb-3">

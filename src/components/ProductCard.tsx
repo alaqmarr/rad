@@ -2,22 +2,11 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import {
-  Plus,
-  Mail,
-  ArrowUpRight,
-  Cog,
-  Zap,
-  Shield,
-  Wrench,
-  Droplets,
-  Gauge,
-  Package,
-  Flame,
-} from "lucide-react";
+import { Plus, Mail, ArrowUpRight } from "lucide-react";
 import { useQuoteCart, useSiteRuntime, useInlineEdit } from "./Providers";
 import { QuickQuoteModal } from "./QuickQuoteModal";
 import { WhatsAppIcon } from "./WhatsAppIcon";
+import { ProductFallbackVisual } from "./ProductFallbackVisual";
 import type { SpecRow } from "@/db/schema";
 
 export interface ProductCardData {
@@ -37,18 +26,6 @@ export interface ProductCardData {
   brandName: string | null;
   brandSlug: string | null;
   categoryName: string | null;
-}
-
-function getCategoryGraphic(categoryName: string | null) {
-  const c = (categoryName || "").toLowerCase();
-  if (c.includes("bearing") || c.includes("pneumatic")) return Cog;
-  if (c.includes("weld")) return Flame;
-  if (c.includes("safety") || c.includes("ppe")) return Shield;
-  if (c.includes("electric") || c.includes("cabl")) return Zap;
-  if (c.includes("precision") || c.includes("fitting")) return Gauge;
-  if (c.includes("irrigation") || c.includes("tractor")) return Droplets;
-  if (c.includes("tool") || c.includes("fastener")) return Wrench;
-  return Package;
 }
 
 function formatInr(amount: number): string {
@@ -71,8 +48,6 @@ export function ProductCard({ item }: { item: ProductCardData }) {
   } catch {
     quickSpecs = [];
   }
-
-  const SpecIcon = getCategoryGraphic(item.categoryName);
 
   const enquiryItem = {
     productId: item.id,
@@ -100,19 +75,13 @@ export function ProductCard({ item }: { item: ProductCardData }) {
                 />
               </div>
             ) : (
-              <div className="px-5 py-4 bg-[#F7F7F4] flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="font-mono text-[11px] font-medium text-stone-500">
-                    {item.sku}
-                  </div>
-                  <div className="text-xs font-semibold text-[#141A21] mt-0.5 truncate">
-                    {item.categoryName || "Industrial Supply"}
-                  </div>
-                </div>
-                <div className="w-10 h-10 rounded border border-stone-200 bg-white flex items-center justify-center text-stone-600 group-hover:border-[#EA6A12] group-hover:text-[#EA6A12] transition-colors shrink-0">
-                  <SpecIcon className="w-5 h-5 stroke-[1.5]" />
-                </div>
-              </div>
+              <ProductFallbackVisual
+                name={item.name}
+                sku={item.sku}
+                brandName={item.brandName}
+                categoryName={item.categoryName}
+                variant="card"
+              />
             )}
           </Link>
 
