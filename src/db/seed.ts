@@ -331,13 +331,13 @@ async function seed() {
     if (row) brandMap[b.slug] = row.id;
   }
 
-  // 6. Product Catalog (Taparia Tools Price List — April 2026)
+  // 6. Product Catalog (Taparia Tools Price List — April 2026, non-destructive upsert)
   void categoryMap;
-  await db.delete(products);
+  void products;
   const { replaceCatalogWithTapariaPdf } = await import("./taparia-catalog");
   const tapariaResult = await replaceCatalogWithTapariaPdf({ clearExisting: false });
   console.log(
-    `Loaded ${tapariaResult.insertedCount} Taparia products across ${tapariaResult.sectionCount} sections (Taparia brand ID: ${brandMap["taparia"] ?? "auto"}).`
+    `Loaded Taparia catalog: ${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated, ${tapariaResult.totalAfterCount} total products (Taparia brand ID: ${brandMap["taparia"] ?? "auto"}).`
   );
 
   // 7. Starter Documents

@@ -1,14 +1,19 @@
 import { replaceCatalogWithTapariaPdf } from "../src/db/taparia-catalog";
 
 async function main() {
-  console.log("Replacing product catalog with Taparia Tools Price List (April 2026)...");
-  const result = await replaceCatalogWithTapariaPdf({ clearExisting: true });
+  console.log(
+    "Adding/updating Taparia Tools Price List (April 2026) while keeping all existing server products..."
+  );
+  const result = await replaceCatalogWithTapariaPdf({ clearExisting: false });
   console.log(
     JSON.stringify(
       {
         status: "ok",
+        existingProductsBefore: result.existingBeforeCount,
         deletedProducts: result.deletedCount,
-        insertedProducts: result.insertedCount,
+        insertedTapariaProducts: result.insertedCount,
+        updatedTapariaProducts: result.updatedCount,
+        totalProductsAfter: result.totalAfterCount,
         sectionsLoaded: result.sectionCount,
         categoryBreakdown: result.categoryCounts,
       },
