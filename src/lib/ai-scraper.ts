@@ -107,7 +107,8 @@ Brands: ${brandList}
 
 Rules:
 - Pick exact categoryId and matching divisionId from above (e.g. power tools go in tools-cutting-machining under industrial, NOT bearings/special-items).
-- Plain English descriptions for Indian B2B buyers. Include 5-8 concrete technical specifications.
+- Plain English descriptions for Indian B2B buyers. Include 5-8 concrete manufacturer technical specifications.
+- NEVER mention any other sellers, distributors, dealers, online stores, marketplaces, or source websites/URLs (only mention the product itself and its actual manufacturer). Do not include notes about "supplier data" or verifying imports.
 - Output ONLY valid JSON (no markdown):
 {"name":"","sku":"RIC-CODE","shortDescription":"","description":"","divisionId":1,"categoryId":1,"brandId":null,"hsnCode":"","priceUnit":"NOS","gstPercent":18,"moq":"1 NOS","leadTime":"3-7 Working Days","specifications":[{"label":"","value":""}]}`;
 
@@ -274,7 +275,7 @@ Rules:
       moq: String(parsed.moq || "1 NOS"),
       leadTime: String(parsed.leadTime || "3–7 Working Days"),
       specifications: normalizeSpecs(parsed.specifications),
-      sourcesUsed: sourcesUsed.slice(0, 6),
+      sourcesUsed: [],
       usedAi: true,
     };
   }

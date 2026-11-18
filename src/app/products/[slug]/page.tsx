@@ -313,6 +313,10 @@ export default async function ProductDetailPage({
                 </div>
               </div>
             )}
+
+            <div className="rounded-md border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs sm:text-sm text-stone-700 leading-relaxed">
+              <strong className="text-[#141A21]">Before Ordering:</strong> Specifications, dimensions, and part revisions can vary by batch. Please confirm your exact technical specifications with our team via WhatsApp or Email before placing an order.
+            </div>
           </div>
 
           <div className="lg:col-span-5 rounded-md border border-[#E4E4E0] bg-white p-6 sm:p-8 space-y-4">

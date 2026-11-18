@@ -82,7 +82,6 @@ export function ProductsManager({
   const [specs, setSpecs] = useState<SpecRow[]>([{ label: "", value: "" }]);
   const [aiQuery, setAiQuery] = useState("");
   const [aiFetching, setAiFetching] = useState(false);
-  const [aiSources, setAiSources] = useState<string[]>([]);
 
   const handleAiAutoFill = async () => {
     const q = aiQuery.trim() || name.trim();
@@ -114,10 +113,9 @@ export function ProductsManager({
       setMoq(d.moq || "1 NOS");
       setLeadTime(d.leadTime || "3–7 Working Days");
       setSpecs(d.specifications?.length ? d.specifications : [{ label: "", value: "" }]);
-      setAiSources(d.sourcesUsed || []);
 
       sileo.success({
-        title: d.usedAi ? "AI Auto-Filled Product Details" : "Web Snippets Populated",
+        title: d.usedAi ? "AI Auto-Filled Product Details" : "Product Draft Populated",
         description: "Review fields, upload an image below, and click Save Product.",
       });
     } catch (err) {
@@ -152,7 +150,6 @@ export function ProductsManager({
     setIsActive(true);
     setSpecs([{ label: "", value: "" }]);
     setAiQuery("");
-    setAiSources([]);
     setModalOpen(true);
   };
 
@@ -427,27 +424,9 @@ export function ProductsManager({
                     className="inline-flex items-center justify-center gap-1.5 rounded bg-[#EA6A12] px-4 py-2 text-xs font-semibold text-white hover:bg-[#C95609] cursor-pointer shrink-0"
                   >
                     {aiFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    {aiFetching ? "Scraping & Extracting..." : "Fetch & Auto-Fill"}
+                    {aiFetching ? "Extracting Specs..." : "Fetch & Auto-Fill"}
                   </button>
                 </div>
-                {aiSources.length > 0 && (
-                  <div className="text-[11px] text-stone-600 space-y-0.5">
-                    <div className="font-semibold">Sourced from web ({aiSources.length} pages):</div>
-                    <div className="flex flex-wrap gap-2">
-                      {aiSources.map((src, i) => (
-                        <a
-                          key={i}
-                          href={src}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline text-[#EA6A12] truncate max-w-[260px]"
-                        >
-                          {src}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
