@@ -1,0 +1,71 @@
+@import "tailwindcss";
+@import "sileo/styles.css";
+
+@theme {
+  --color-brand-amber: #ea6a12;
+  --color-brand-amber-dark: #c95609;
+  --color-brand-slate: #4e5d6c;
+  --color-ink: #141a21;
+  --color-ink-muted: #4b5563;
+  --color-surface: #fbfbfa;
+  --color-surface-card: #ffffff;
+  --color-hairline: #e4e4e0;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-jakarta), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --background: #fbfbfa;
+  --foreground: #141a21;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.bg-radiant-banner {
+  background: linear-gradient(
+    122deg,
+    #1e262f 0%,
+    #3b4958 46%,
+    #6e3a16 78%,
+    #c85910 100%
+  );
+}
+
+/* Crisp custom scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(20, 26, 33, 0.16);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 26, 33, 0.3);
+}
