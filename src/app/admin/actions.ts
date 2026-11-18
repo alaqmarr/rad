@@ -265,7 +265,7 @@ export async function upsertBrandAction(data: {
   logoUrl: string | null;
   thumbnailUrl?: string | null;
   countryOfOrigin: string;
-  sourcingType: "independent" | "authorized";
+  sourcingType: "independent" | "authorized" | "in_house";
   sourcingNote: string;
   description: string;
   websiteUrl?: string;

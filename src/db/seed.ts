@@ -331,13 +331,15 @@ async function seed() {
     if (row) brandMap[b.slug] = row.id;
   }
 
-  // 6. Product Catalog (Taparia Tools Price List — April 2026, non-destructive upsert)
+  // 6. Product Catalog (Taparia Tools + Radiant Fan Safety Net Covers, non-destructive upsert)
   void categoryMap;
   void products;
   const { replaceCatalogWithTapariaPdf } = await import("./taparia-catalog");
   const tapariaResult = await replaceCatalogWithTapariaPdf({ clearExisting: false });
+  const { loadRadiantFanNetProducts } = await import("./radiant-fan-nets");
+  const fanNetResult = await loadRadiantFanNetProducts();
   console.log(
-    `Loaded Taparia catalog: ${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated, ${tapariaResult.totalAfterCount} total products (Taparia brand ID: ${brandMap["taparia"] ?? "auto"}).`
+    `Loaded Taparia catalog (${tapariaResult.insertedCount} inserted, ${tapariaResult.updatedCount} updated; Taparia brand ID: ${brandMap["taparia"] ?? "auto"}) + Radiant Fan Safety Nets (${fanNetResult.insertedCount} inserted, ${fanNetResult.updatedCount} updated; total: ${fanNetResult.totalProductsAfter}).`
   );
 
   // 7. Starter Documents

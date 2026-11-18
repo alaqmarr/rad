@@ -153,7 +153,11 @@ export default async function BrandsPage() {
                   <div className="mt-5 pt-3 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
                     <span>Origin: {brand.countryOfOrigin}</span>
                     <span className="font-medium text-[#141A21]">
-                      {brand.sourcingType === "authorized" ? "Authorized Partner" : "Sourced on Order"}
+                      {brand.sourcingType === "in_house"
+                        ? "Radiant House Brand"
+                        : brand.sourcingType === "authorized"
+                          ? "Authorized Partner"
+                          : "Sourced on Order"}
                     </span>
                   </div>
                 </div>

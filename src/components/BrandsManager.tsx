@@ -60,7 +60,7 @@ export function BrandsManager({
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [countryOfOrigin, setCountryOfOrigin] = useState("India");
-  const [sourcingType, setSourcingType] = useState<"independent" | "authorized">("independent");
+  const [sourcingType, setSourcingType] = useState<"independent" | "authorized" | "in_house">("independent");
   const [sourcingNote, setSourcingNote] = useState(
     "We are not an official authorized dealer yet; we source genuine items directly against your order."
   );
@@ -99,7 +99,13 @@ export function BrandsManager({
     setLogoUrl(b.logoUrl);
     setThumbnailUrl(b.thumbnailUrl);
     setCountryOfOrigin(b.countryOfOrigin);
-    setSourcingType(b.sourcingType === "authorized" ? "authorized" : "independent");
+    setSourcingType(
+      b.sourcingType === "in_house"
+        ? "in_house"
+        : b.sourcingType === "authorized"
+          ? "authorized"
+          : "independent"
+    );
     setSourcingNote(b.sourcingNote);
     setDescription(b.description);
     setWebsiteUrl(b.websiteUrl || "");
@@ -303,7 +309,11 @@ export function BrandsManager({
                           <h3 className="font-bold text-[#141A21]">{b.name}</h3>
                           <div className="font-mono text-[11px] text-stone-500 mt-0.5">
                             {b.countryOfOrigin} •{" "}
-                            {b.sourcingType === "authorized" ? "AUTHORIZED" : "INDEPENDENT"}
+                            {b.sourcingType === "in_house"
+                              ? "IN-HOUSE"
+                              : b.sourcingType === "authorized"
+                                ? "AUTHORIZED"
+                                : "INDEPENDENT"}
                           </div>
                         </div>
                       </div>
@@ -483,7 +493,7 @@ export function BrandsManager({
                 <select
                   value={sourcingType}
                   onChange={(e) =>
-                    setSourcingType(e.target.value as "independent" | "authorized")
+                    setSourcingType(e.target.value as "independent" | "authorized" | "in_house")
                   }
                   className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
                 >
@@ -491,6 +501,7 @@ export function BrandsManager({
                     Independent Sourcing (Not Authorized Dealer Yet)
                   </option>
                   <option value="authorized">Authorized Distributor / Dealer</option>
+                  <option value="in_house">Radiant House Brand / Direct</option>
                 </select>
               </div>
 

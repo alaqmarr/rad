@@ -105,9 +105,11 @@ export default async function BrandDetailPage({
               <div className="text-stone-400">
                 Status:{" "}
                 <strong className="text-white">
-                  {brand.sourcingType === "authorized"
-                    ? "Authorized Partner"
-                    : "Independent Sourcing (Not Authorized Dealer)"}
+                  {brand.sourcingType === "in_house"
+                    ? "Radiant House Brand"
+                    : brand.sourcingType === "authorized"
+                      ? "Authorized Partner"
+                      : "Independent Sourcing (Not Authorized Dealer)"}
                 </strong>
               </div>
               <p className="text-stone-300 leading-relaxed">
