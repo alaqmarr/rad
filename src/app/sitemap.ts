@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { getActiveBrands, getActiveDivisions, queryProducts } from "@/lib/catalog";
 import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, getDetectedSiteOrigin } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
@@ -9,40 +10,80 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     getSiteSettings(),
     getActiveDivisions(),
     getActiveBrands(),
-    queryProducts({ limit: 500 }),
+    queryProducts({ limit: 1000 }),
   ]);
 
-  const baseUrl = (settings["site_url"] || "https://radiantindustrial.in").replace(/\/+$/, "");
+  const baseUrl = await getDetectedSiteOrigin(settings);
 
-  const staticRoutes = ["", "/products", "/brands", "/documents", "/about", "/contact"].map(
-    (route) => ({
-      url: `${baseUrl}${route}`,
+  const staticRoutes: MetadataRoute.Sitemap = [
+    {
+      url: baseUrl,
       lastModified: new Date(),
-      changeFrequency: "weekly" as const,
-      priority: route === "" ? 1.0 : 0.8,
-    })
-  );
+      changeFrequency: "daily",
+      priority: 1.0,
+      images: [buildAbsoluteUrl(baseUrl, "/images/hero-industrial.jpg")],
+    },
+    {
+      url: `${baseUrl}/products`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.9,
+    },
+    {
+      url: `${baseUrl}/brands`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.85,
+    },
+    {
+      url: `${baseUrl}/about`,
+      lastModified: new Date(),
+      changeFrequency: "monthly",
+      priority: 0.75,
+    },
+    {
+      url: `${baseUrl}/contact`,
+      lastModified: new Date(),
+      changeFrequency: "monthly",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/documents`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.65,
+    },
+  ];
 
-  const divisionRoutes = divisions.map((d) => ({
+  const divisionRoutes: MetadataRoute.Sitemap = divisions.map((d) => ({
     url: `${baseUrl}/divisions/${d.slug}`,
     lastModified: new Date(),
-    changeFrequency: "weekly" as const,
+    changeFrequency: "weekly",
     priority: 0.85,
+    ...(d.heroImageUrl ? { images: [buildAbsoluteUrl(baseUrl, d.heroImageUrl)] } : {}),
   }));
 
-  const brandRoutes = brands.map((b) => ({
-    url: `${baseUrl}/brands/${b.slug}`,
-    lastModified: new Date(),
-    changeFrequency: "weekly" as const,
-    priority: 0.75,
-  }));
+  const brandRoutes: MetadataRoute.Sitemap = brands.map((b) => {
+    const img = b.thumbnailUrl || b.logoUrl;
+    return {
+      url: `${baseUrl}/brands/${b.slug}`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.75,
+      ...(img ? { images: [buildAbsoluteUrl(baseUrl, img)] } : {}),
+    };
+  });
 
-  const productRoutes = items.map((row) => ({
-    url: `${baseUrl}/products/${row.product.slug}`,
-    lastModified: new Date(row.product.updatedAt || Date.now()),
-    changeFrequency: "weekly" as const,
-    priority: 0.8,
-  }));
+  const productRoutes: MetadataRoute.Sitemap = items.map((row) => {
+    const img = row.product.primaryImageUrl || row.division?.heroImageUrl;
+    return {
+      url: `${baseUrl}/products/${row.product.slug}`,
+      lastModified: new Date(row.product.updatedAt || Date.now()),
+      changeFrequency: "weekly",
+      priority: 0.8,
+      ...(img ? { images: [buildAbsoluteUrl(baseUrl, img)] } : {}),
+    };
+  });
 
   return [...staticRoutes, ...divisionRoutes, ...brandRoutes, ...productRoutes];
 }

@@ -1,25 +1,68 @@
 import React from "react";
 import type { Metadata } from "next";
 import { getPageBlocks, getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { EditableBlockText, EditableSettingText } from "@/components/InlineEdit";
 import { ContactQuoteForm } from "@/components/ContactQuoteForm";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Contact & Request Wholesale Quotation",
-  description:
-    "Submit a formal RFQ, upload a BOM/PO, or connect via WhatsApp or Email with Radiant Industrial Co. in Ranigunj, Secunderabad.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const [blocks, settings] = await Promise.all([getPageBlocks("contact"), getSiteSettings()]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const title = blocks["page_title"]?.content || "Contact & Request Wholesale Quotation";
+  const description =
+    blocks["page_lead"]?.content ||
+    "Submit a formal RFQ, upload a BOM/PO, or connect via WhatsApp or Email with Radiant Industrial Co. in Ranigunj, Secunderabad.";
+
+  return buildSeoMetadata({
+    origin,
+    path: "/contact",
+    title,
+    description,
+    settings,
+    imageUrl: "/images/hero-industrial.jpg",
+  });
+}
 
 export default async function ContactPage() {
   const [blocks, settings] = await Promise.all([
     getPageBlocks("contact"),
     getSiteSettings(),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const contactJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "ContactPage",
+        name: "Request a Wholesale Quote — Radiant Industrial Co.",
+        url: buildAbsoluteUrl(origin, "/contact"),
+        mainEntity: {
+          "@type": "LocalBusiness",
+          name: settings["company_name"] || "Radiant Industrial Co.",
+          telephone: settings["contact_phone"] || "+91 8522095253",
+          email: settings["contact_email"] || "info@radiantindustrial.in",
+          address: settings["contact_address"] || "Sai Vaishnavi Complex, Ranigunj, Secunderabad 500003, Telangana, India",
+        },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          { "@type": "ListItem", position: 2, name: "Contact", item: buildAbsoluteUrl(origin, "/contact") },
+        ],
+      },
+    ],
+  };
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(contactJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-14">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 space-y-3">
           <EditableBlockText

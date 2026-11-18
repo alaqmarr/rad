@@ -86,6 +86,7 @@ set -a
 # shellcheck source=/dev/null
 source "$APP_DIR/.env"
 set +a
+[ -z "${DATABASE_AUTH_TOKEN:-}" ] && unset DATABASE_AUTH_TOKEN || true
 export PORT="${PORT:-$APP_PORT}"
 
 # 6. Install npm dependencies cleanly

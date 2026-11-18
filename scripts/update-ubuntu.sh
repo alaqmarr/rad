@@ -69,6 +69,7 @@ if [ -f "$APP_DIR/.env" ]; then
   source "$APP_DIR/.env"
   set +a
 fi
+[ -z "${DATABASE_AUTH_TOKEN:-}" ] && unset DATABASE_AUTH_TOKEN || true
 export PORT="${PORT:-$APP_PORT}"
 
 # 3. Install dependencies cleanly

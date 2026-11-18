@@ -7,6 +7,7 @@ import { Footer } from "@/components/Footer";
 import { QuoteSheetDrawer } from "@/components/QuoteSheetDrawer";
 import { AiProcurementDrawer } from "@/components/AiProcurementDrawer";
 import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, getDetectedSiteOrigin } from "@/lib/seo";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,53 +31,81 @@ const jetbrains = JetBrains_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSiteSettings();
-  const siteUrl = s["site_url"] || "https://radiantindustrial.in";
+  const origin = await getDetectedSiteOrigin(s);
+  const companyName = s["company_name"] || "Radiant Industrial Co.";
   const title =
     s["seo_default_title"] ||
-    "Radiant Industrial Co. | B2B Wholesale Industrial & Agricultural Procurement India";
+    "Radiant Industrial Co. | Wholesale Industrial MRO, Farm & Special Supplies India";
   const description =
     s["seo_default_description"] ||
-    "Premier B2B wholesale supply and multi-brand industrial procurement partner in Secunderabad, India.";
+    "Wholesale MRO, factory hardware, fasteners, bearings, valves, safety gear, electricals, agricultural irrigation, facility equipment, and custom Special Items across India.";
   const keywords = (s["seo_keywords"] || "")
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean);
+  const heroImg = buildAbsoluteUrl(origin, s["logo_primary"] || "/images/hero-industrial.jpg");
+  const googleVerification = (s["google_site_verification"] || "").trim();
 
   return {
-    metadataBase: new URL(siteUrl),
+    metadataBase: new URL(origin),
     title: {
       default: title,
-      template: "%s | Radiant Industrial Co.",
+      template: `%s | ${companyName}`,
     },
     description,
+    applicationName: companyName,
+    authors: [{ name: companyName }],
+    creator: companyName,
+    publisher: companyName,
     keywords: keywords.length
       ? keywords
       : [
           "B2B industrial procurement India",
-          "wholesale industrial supply",
-          "agricultural equipment India",
+          "wholesale industrial MRO supply",
+          "agricultural irrigation equipment India",
           "safety PPE wholesale",
           "Secunderabad industrial supplier",
         ],
+    alternates: {
+      canonical: origin,
+    },
     openGraph: {
       type: "website",
       locale: "en_IN",
-      url: siteUrl,
-      siteName: s["company_name"] || "Radiant Industrial Co.",
+      url: origin,
+      siteName: companyName,
       title,
       description,
       images: [
         {
-          url: s["logo_primary"] || "/logos/logo-long.png",
+          url: heroImg,
           width: 1200,
           height: 630,
-          alt: s["company_name"] || "Radiant Industrial Co.",
+          alt: companyName,
         },
       ],
     },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [heroImg],
+    },
+    icons: {
+      icon: "/icon.png",
+      apple: "/logos/logo-short.png",
+    },
+    verification: googleVerification ? { google: googleVerification } : undefined,
     robots: {
       index: true,
       follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
     },
   };
 }
@@ -87,26 +116,54 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const settings = await getSiteSettings();
-  const siteUrl = settings["site_url"] || "https://radiantindustrial.in";
+  const origin = await getDetectedSiteOrigin(settings);
   const companyName = settings["company_name"] || "Radiant Industrial Co.";
+  const gtmId = (settings["google_tag_id"] || "GTM-N7CK5GLP").trim() || "GTM-N7CK5GLP";
 
-  const jsonLd = {
+  const orgJsonLd = {
     "@context": "https://schema.org",
-    "@type": "WholesaleStore",
-    name: companyName,
-    url: siteUrl,
-    logo: `${siteUrl}${settings["logo_primary"] || "/logos/logo-long.png"}`,
-    telephone: settings["contact_phone"] || "+91-8522095253",
-    email: settings["contact_email"] || "info@radiantindustrial.in",
-    address: {
-      "@type": "PostalAddress",
-      streetAddress: "Sai Vaishnavi Complex, Ranigunj",
-      addressLocality: "Secunderabad",
-      addressRegion: "Telangana",
-      postalCode: "500003",
-      addressCountry: "IN",
-    },
-    areaServed: "IN",
+    "@graph": [
+      {
+        "@type": "WholesaleStore",
+        "@id": `${origin}/#organization`,
+        name: companyName,
+        url: origin,
+        logo: buildAbsoluteUrl(origin, settings["logo_primary"] || "/logos/logo-long.png"),
+        image: buildAbsoluteUrl(origin, "/images/hero-industrial.jpg"),
+        description:
+          settings["seo_default_description"] ||
+          "Wholesale industrial MRO, agricultural supplies, facility equipment, and custom Special Items across India.",
+        telephone: settings["contact_phone"] || "+91-8522095253",
+        email: settings["contact_email"] || "info@radiantindustrial.in",
+        address: {
+          "@type": "PostalAddress",
+          streetAddress: "Sai Vaishnavi Complex, Ranigunj",
+          addressLocality: "Secunderabad",
+          addressRegion: "Telangana",
+          postalCode: "500003",
+          addressCountry: "IN",
+        },
+        areaServed: {
+          "@type": "Country",
+          name: "India",
+        },
+      },
+      {
+        "@type": "WebSite",
+        "@id": `${origin}/#website`,
+        url: origin,
+        name: companyName,
+        publisher: { "@id": `${origin}/#organization` },
+        potentialAction: {
+          "@type": "SearchAction",
+          target: {
+            "@type": "EntryPoint",
+            urlTemplate: `${origin}/products?q={search_term_string}`,
+          },
+          "query-input": "required name=search_term_string",
+        },
+      },
+    ],
   };
 
   return (
@@ -114,10 +171,32 @@ export default async function RootLayout({
       lang="en"
       className={`${inter.variable} ${jakarta.variable} ${jetbrains.variable}`}
     >
+      <head>
+        <script
+          async
+          src={`https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(gtmId)}`}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});`,
+          }}
+        />
+      </head>
       <body className="min-h-screen flex flex-col bg-[#FBFBFA] text-[#141A21] selection:bg-[#EA6A12]/20 selection:text-[#141A21]">
+        <noscript>
+          <iframe
+            src={`https://www.googletagmanager.com/ns.html?id=${encodeURIComponent(gtmId)}`}
+            height="0"
+            width="0"
+            style={{ display: "none", visibility: "hidden" }}
+          />
+        </noscript>
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
         />
         <Providers
           whatsappNumber={settings["whatsapp_number"] || "918522095253"}

@@ -26,6 +26,8 @@ async function seed() {
     { key: "seo_default_title", category: "seo", label: "Default Meta Title", value: "Radiant Industrial Co. | Wholesale Industrial MRO, Farm & Special Supplies India", valueType: "text", isSecret: false },
     { key: "seo_default_description", category: "seo", label: "Default Meta Description", value: "Wholesale MRO, factory hardware, fasteners, bearings, valves, safety gear, electricals, agricultural irrigation, facility equipment, and custom Special Items across India.", valueType: "textarea", isSecret: false },
     { key: "seo_keywords", category: "seo", label: "Global SEO Keywords", value: "industrial MRO supply India, wholesale fasteners bearings valves, safety PPE supplier Secunderabad, electrical cables switchgear, agricultural irrigation tractor implements, warehouse racking material handling, custom machined special items India", valueType: "textarea", isSecret: false },
+    { key: "google_tag_id", category: "seo", label: "Google Tag / GTM Container ID", value: "GTM-N7CK5GLP", valueType: "text", isSecret: false },
+    { key: "google_site_verification", category: "seo", label: "Google Search Console Verification Code (Optional)", value: "", valueType: "text", isSecret: false },
 
     { key: "r2_account_id", category: "r2", label: "Cloudflare R2 Account ID", value: "", valueType: "text", isSecret: false },
     { key: "r2_access_key_id", category: "r2", label: "R2 Access Key ID", value: "", valueType: "password", isSecret: true },

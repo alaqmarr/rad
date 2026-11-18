@@ -9,6 +9,8 @@ import {
   getDivisionBySlug,
   queryProducts,
 } from "@/lib/catalog";
+import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { ProductCard } from "@/components/ProductCard";
 
 export const dynamic = "force-dynamic";
@@ -19,13 +21,25 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const division = await getDivisionBySlug(slug);
-  if (!division) return { title: "Supply Area Not Found" };
+  const resolvedSlug = slug === "special-technical" ? "special-items" : slug;
+  const [division, settings] = await Promise.all([
+    getDivisionBySlug(resolvedSlug),
+    getSiteSettings(),
+  ]);
+  if (!division) return { title: "Supply Area Not Found", robots: { index: false, follow: false } };
 
-  return {
+  const cats = await getActiveCategories(division.id);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  return buildSeoMetadata({
+    origin,
+    path: `/divisions/${division.slug}`,
     title: division.seoTitle || division.name,
-    description: division.seoDescription || division.description,
-  };
+    description: division.seoDescription || division.description || division.tagline,
+    keywords: [division.name, ...cats.map((c) => c.name)],
+    settings,
+    imageUrl: division.heroImageUrl || "/images/div-industrial.jpg",
+  });
 }
 
 export default async function DivisionDetailPage({
@@ -43,13 +57,44 @@ export default async function DivisionDetailPage({
   ]);
   if (!division) notFound();
 
-  const [cats, divProducts] = await Promise.all([
+  const [settings, cats, divProducts] = await Promise.all([
+    getSiteSettings(),
     getActiveCategories(division.id),
     queryProducts({ division: division.slug, limit: 60 }),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const divisionJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "CollectionPage",
+        name: division.name,
+        description: division.description || division.tagline,
+        url: buildAbsoluteUrl(origin, `/divisions/${division.slug}`),
+        image: division.heroImageUrl ? buildAbsoluteUrl(origin, division.heroImageUrl) : undefined,
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          {
+            "@type": "ListItem",
+            position: 2,
+            name: division.name,
+            item: buildAbsoluteUrl(origin, `/divisions/${division.slug}`),
+          },
+        ],
+      },
+    ],
+  };
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(divisionJsonLd) }}
+      />
       {/* Division Switcher */}
       <div className="border-b border-stone-200 bg-white">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 flex flex-wrap gap-2 py-3 text-xs">

@@ -1,9 +1,12 @@
 import type { MetadataRoute } from "next";
 import { getSiteSettings } from "@/lib/settings";
+import { getDetectedSiteOrigin } from "@/lib/seo";
+
+export const dynamic = "force-dynamic";
 
 export default async function robots(): Promise<MetadataRoute.Robots> {
   const settings = await getSiteSettings();
-  const baseUrl = (settings["site_url"] || "https://radiantindustrial.in").replace(/\/+$/, "");
+  const baseUrl = await getDetectedSiteOrigin(settings);
 
   return {
     rules: [
@@ -14,5 +17,6 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
       },
     ],
     sitemap: `${baseUrl}/sitemap.xml`,
+    host: baseUrl,
   };
 }

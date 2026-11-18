@@ -1,4 +1,5 @@
 import React from "react";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { sql } from "drizzle-orm";
@@ -8,6 +9,11 @@ import { authOptions } from "@/lib/auth";
 import { AdminLoginForm } from "@/components/AdminLoginForm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Admin Sign In",
+  robots: { index: false, follow: false },
+};
 
 export default async function AdminLoginPage() {
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(users);

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { getBrandBySlug, queryProducts } from "@/lib/catalog";
+import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { ProductCard } from "@/components/ProductCard";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +16,19 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const brand = await getBrandBySlug(slug);
-  if (!brand) return { title: "Brand Not Found" };
+  const [brand, settings] = await Promise.all([getBrandBySlug(slug), getSiteSettings()]);
+  if (!brand) return { title: "Brand Not Found", robots: { index: false, follow: false } };
 
-  return {
-    title: brand.seoTitle || `${brand.name} Products`,
+  const origin = await getDetectedSiteOrigin(settings);
+  return buildSeoMetadata({
+    origin,
+    path: `/brands/${brand.slug}`,
+    title: brand.seoTitle || `${brand.name} Wholesale Procurement India`,
     description: brand.seoDescription || brand.description,
-  };
+    keywords: [brand.name, `${brand.name} supplier India`, `${brand.name} wholesale`],
+    settings,
+    imageUrl: brand.thumbnailUrl || brand.logoUrl || "/images/div-industrial.jpg",
+  });
 }
 
 export default async function BrandDetailPage({
@@ -29,13 +37,42 @@ export default async function BrandDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const brand = await getBrandBySlug(slug);
+  const [brand, settings] = await Promise.all([getBrandBySlug(slug), getSiteSettings()]);
   if (!brand) notFound();
 
-  const brandProducts = await queryProducts({ brand: brand.slug, limit: 100 });
+  const [brandProducts, origin] = await Promise.all([
+    queryProducts({ brand: brand.slug, limit: 100 }),
+    getDetectedSiteOrigin(settings),
+  ]);
+  const brandUrl = buildAbsoluteUrl(origin, `/brands/${brand.slug}`);
+
+  const brandJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Brand",
+        name: brand.name,
+        description: brand.description,
+        url: brandUrl,
+        logo: brand.logoUrl ? buildAbsoluteUrl(origin, brand.logoUrl) : undefined,
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          { "@type": "ListItem", position: 2, name: "Brands", item: buildAbsoluteUrl(origin, "/brands") },
+          { "@type": "ListItem", position: 3, name: brand.name, item: brandUrl },
+        ],
+      },
+    ],
+  };
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(brandJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-12">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 space-y-6">
           <nav className="flex items-center gap-1.5 text-xs text-stone-400">

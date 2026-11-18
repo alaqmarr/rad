@@ -3,25 +3,77 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { getActiveBrands } from "@/lib/catalog";
-import { getPageBlocks } from "@/lib/settings";
+import { getPageBlocks, getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { EditableBlockText } from "@/components/InlineEdit";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Brands We Source",
-  description:
-    "Explore 24+ Indian and international industrial, electrical, safety, and farm brands sourced by Radiant Industrial Co.",
-};
-
-export default async function BrandsPage() {
-  const [brandsList, blocks] = await Promise.all([
+export async function generateMetadata(): Promise<Metadata> {
+  const [brandsList, blocks, settings] = await Promise.all([
     getActiveBrands(),
     getPageBlocks("brands"),
+    getSiteSettings(),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const title = blocks["page_title"]?.content || "Brands We Source";
+  const description =
+    blocks["page_lead"]?.content ||
+    `Explore ${brandsList.length}+ Indian and international industrial, electrical, safety, and farm brands sourced by Radiant Industrial Co.`;
+
+  return buildSeoMetadata({
+    origin,
+    path: "/brands",
+    title,
+    description,
+    keywords: brandsList.slice(0, 12).map((b) => `${b.name} India wholesale`),
+    settings,
+    imageUrl: "/images/div-industrial.jpg",
+  });
+}
+
+export default async function BrandsPage() {
+  const [brandsList, blocks, settings] = await Promise.all([
+    getActiveBrands(),
+    getPageBlocks("brands"),
+    getSiteSettings(),
+  ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const brandsJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "CollectionPage",
+        name: "Brands Sourced by Radiant Industrial Co.",
+        url: buildAbsoluteUrl(origin, "/brands"),
+        mainEntity: {
+          "@type": "ItemList",
+          numberOfItems: brandsList.length,
+          itemListElement: brandsList.slice(0, 30).map((b, idx) => ({
+            "@type": "ListItem",
+            position: idx + 1,
+            name: b.name,
+            url: buildAbsoluteUrl(origin, `/brands/${b.slug}`),
+          })),
+        },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          { "@type": "ListItem", position: 2, name: "Brands", item: buildAbsoluteUrl(origin, "/brands") },
+        ],
+      },
+    ],
+  };
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(brandsJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-14">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           <div className="lg:col-span-7 space-y-3">

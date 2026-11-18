@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { FileText, Package, ChevronRight, Download } from "lucide-react";
 import { getProductBySlug } from "@/lib/catalog";
 import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
 import type { SpecRow } from "@/db/schema";
@@ -17,13 +18,32 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const data = await getProductBySlug(slug);
-  if (!data) return { title: "Product Not Found" };
+  const [data, settings] = await Promise.all([getProductBySlug(slug), getSiteSettings()]);
+  if (!data) return { title: "Product Not Found", robots: { index: false, follow: false } };
 
-  return {
-    title: data.product.seoTitle || `${data.product.name} (${data.product.sku})`,
-    description: data.product.seoDescription || data.product.shortDescription,
-  };
+  const origin = await getDetectedSiteOrigin(settings);
+  const { product, division, category, brand } = data;
+  const image = product.primaryImageUrl || division?.heroImageUrl || "/images/hero-industrial.jpg";
+
+  return buildSeoMetadata({
+    origin,
+    path: `/products/${product.slug}`,
+    title: product.seoTitle || `${product.name} (${product.sku})`,
+    description:
+      product.seoDescription ||
+      product.shortDescription ||
+      `${product.name} wholesale supply across India by Radiant Industrial Co.`,
+    keywords: [
+      product.name,
+      product.sku,
+      brand?.name || "",
+      category?.name || "",
+      division?.name || "",
+      product.hsnCode ? `HSN ${product.hsnCode}` : "",
+    ].filter(Boolean),
+    settings,
+    imageUrl: image,
+  });
 }
 
 export default async function ProductDetailPage({
@@ -49,26 +69,70 @@ export default async function ProductDetailPage({
     gallery = [];
   }
 
-  const siteUrl = settings["site_url"] || "https://radiantindustrial.in";
+  const siteUrl = await getDetectedSiteOrigin(settings);
+  const showPublicPrices = settings["show_public_prices"] === "true";
+  const imageUrl = buildAbsoluteUrl(
+    siteUrl,
+    product.primaryImageUrl || division?.heroImageUrl || "/images/hero-industrial.jpg"
+  );
+  const productUrl = buildAbsoluteUrl(siteUrl, `/products/${product.slug}`);
 
   const productJsonLd = {
     "@context": "https://schema.org",
-    "@type": "Product",
-    name: product.name,
-    sku: product.sku,
-    description: product.description || product.shortDescription,
-    brand: brand ? { "@type": "Brand", name: brand.name } : undefined,
-    category: category?.name,
-    url: `${siteUrl}/products/${product.slug}`,
-    offers:
-      product.pricingMode === "priced" && product.basePrice != null
-        ? {
-            "@type": "Offer",
-            priceCurrency: "INR",
-            price: product.basePrice,
-            availability: "https://schema.org/InStock",
-          }
-        : undefined,
+    "@graph": [
+      {
+        "@type": "Product",
+        name: product.name,
+        sku: product.sku,
+        mpn: product.sku,
+        image: [imageUrl, ...gallery.map((g) => buildAbsoluteUrl(siteUrl, g))],
+        description: product.description || product.shortDescription,
+        brand: brand ? { "@type": "Brand", name: brand.name } : undefined,
+        category: category?.name,
+        url: productUrl,
+        additionalProperty: specs.map((s) => ({
+          "@type": "PropertyValue",
+          name: s.label,
+          value: s.value,
+        })),
+        offers: {
+          "@type": "Offer",
+          url: productUrl,
+          priceCurrency: "INR",
+          ...(showPublicPrices && product.pricingMode === "priced" && product.basePrice != null
+            ? { price: product.basePrice }
+            : {}),
+          availability: "https://schema.org/InStock",
+          seller: {
+            "@type": "Organization",
+            name: settings["company_name"] || "Radiant Industrial Co.",
+          },
+        },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
+          { "@type": "ListItem", position: 2, name: "Products", item: `${siteUrl}/products` },
+          ...(division
+            ? [
+                {
+                  "@type": "ListItem",
+                  position: 3,
+                  name: division.name,
+                  item: `${siteUrl}/divisions/${division.slug}`,
+                },
+              ]
+            : []),
+          {
+            "@type": "ListItem",
+            position: division ? 4 : 3,
+            name: product.name,
+            item: productUrl,
+          },
+        ],
+      },
+    ],
   };
 
   return (

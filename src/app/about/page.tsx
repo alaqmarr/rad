@@ -3,24 +3,63 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { getPageBlocks, getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { EditableBlockText, EditableSettingText } from "@/components/InlineEdit";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "About Radiant Industrial Co.",
-  description:
-    "Headquartered in Ranigunj, Secunderabad, Radiant Industrial Co. is a B2B multi-brand wholesale procurement partner across industrial, technical, agricultural, and facility supplies in India.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const [blocks, settings] = await Promise.all([getPageBlocks("about"), getSiteSettings()]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const title = blocks["hero_title"]?.content || "About Radiant Industrial Co.";
+  const description =
+    blocks["hero_lead"]?.content ||
+    "Headquartered in Ranigunj, Secunderabad, Radiant Industrial Co. is a B2B multi-brand wholesale procurement partner across industrial, technical, agricultural, and facility supplies in India.";
+
+  return buildSeoMetadata({
+    origin,
+    path: "/about",
+    title,
+    description,
+    settings,
+    imageUrl: "/images/hero-industrial.jpg",
+  });
+}
 
 export default async function AboutPage() {
   const [blocks, settings] = await Promise.all([
     getPageBlocks("about"),
     getSiteSettings(),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const aboutJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "AboutPage",
+        name: "About Radiant Industrial Co.",
+        url: buildAbsoluteUrl(origin, "/about"),
+        description:
+          blocks["hero_lead"]?.content ||
+          "Wholesale industrial MRO, farm, facility, and special items procurement across India.",
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          { "@type": "ListItem", position: 2, name: "About Us", item: buildAbsoluteUrl(origin, "/about") },
+        ],
+      },
+    ],
+  };
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(aboutJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-16">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
           <div className="lg:col-span-8 space-y-4">

@@ -8,15 +8,42 @@ import {
   getActiveDivisions,
   queryProducts,
 } from "@/lib/catalog";
+import { getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { ProductsCatalogClient } from "@/components/ProductsCatalogClient";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Products & Wholesale Price Catalog",
-  description:
-    "Browse industrial machine parts, power tools, safety gear, electrical cables, measuring tools, irrigation systems, and warehouse racks.",
-};
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; division?: string; category?: string; brand?: string }>;
+}): Promise<Metadata> {
+  const [sp, settings] = await Promise.all([searchParams, getSiteSettings()]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const parts = [sp.brand, sp.category, sp.division, sp.q].filter(Boolean);
+  const filterTitle = parts.length
+    ? `${parts.join(" • ")} — Products Catalog`
+    : "Products & Wholesale Supply Catalog";
+  const description = parts.length
+    ? `Explore genuine wholesale ${parts.join(", ")} supplies sourced across India by Radiant Industrial Co.`
+    : "Browse industrial MRO machine parts, fasteners, bearings, valves, power tools, safety PPE, electricals, agricultural irrigation, facility equipment, and custom Special Items.";
+
+  return buildSeoMetadata({
+    origin,
+    path: "/products",
+    title: filterTitle,
+    description,
+    keywords: [
+      "industrial MRO catalog India",
+      "wholesale tools fasteners bearings",
+      "agricultural pumps irrigation supplies",
+      "custom special industrial items",
+    ],
+    settings,
+    imageUrl: "/images/div-industrial.jpg",
+  });
+}
 
 export default async function ProductsPage({
   searchParams,
@@ -36,12 +63,31 @@ export default async function ProductsPage({
   const brand = sp.brand || "";
   const pricing = sp.pricing || "all";
 
-  const [divisionsList, categoriesList, brandsList, items] = await Promise.all([
+  const [settings, divisionsList, categoriesList, brandsList, items] = await Promise.all([
+    getSiteSettings(),
     getActiveDivisions(),
     getActiveCategories(),
     getActiveBrands(),
     queryProducts({ q, division, category, brand, pricing, limit: 150 }),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const catalogJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    name: "Radiant Industrial Co. Products Catalog",
+    url: buildAbsoluteUrl(origin, "/products"),
+    mainEntity: {
+      "@type": "ItemList",
+      numberOfItems: items.length,
+      itemListElement: items.slice(0, 20).map((row, idx) => ({
+        "@type": "ListItem",
+        position: idx + 1,
+        url: buildAbsoluteUrl(origin, `/products/${row.product.slug}`),
+        name: row.product.name,
+      })),
+    },
+  };
 
   const cardItems = items.map((row) => ({
     id: row.product.id,
@@ -64,6 +110,10 @@ export default async function ProductsPage({
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen pb-20">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(catalogJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-11">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>

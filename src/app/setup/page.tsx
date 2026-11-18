@@ -1,10 +1,16 @@
 import React from "react";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { sql } from "drizzle-orm";
 import { db, users } from "@/db";
 import { SetupForm } from "@/components/SetupForm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Initial Admin Setup",
+  robots: { index: false, follow: false },
+};
 
 export default async function SetupPage() {
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(users);

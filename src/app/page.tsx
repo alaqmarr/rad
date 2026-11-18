@@ -1,8 +1,10 @@
 import React from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { WhatsAppIcon } from "@/components/WhatsAppIcon";
 import { getPageBlocks, getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import {
   getActiveDivisions,
   getActiveCategories,
@@ -15,6 +17,31 @@ import { HomeDivisionExplorer } from "@/components/HomeDivisionExplorer";
 import { ProductCard } from "@/components/ProductCard";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const [settings, blocks] = await Promise.all([
+    getSiteSettings(),
+    getPageBlocks("home"),
+  ]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const title =
+    settings["seo_default_title"] ||
+    blocks["hero_title"]?.content ||
+    "Radiant Industrial Co. | Wholesale Industrial MRO, Farm & Special Supplies India";
+  const description =
+    settings["seo_default_description"] ||
+    blocks["hero_lead"]?.content ||
+    "Wholesale MRO, factory hardware, fasteners, bearings, valves, safety gear, electricals, agricultural irrigation, facility equipment, and custom Special Items across India.";
+
+  return buildSeoMetadata({
+    origin,
+    path: "/",
+    title,
+    description,
+    settings,
+    imageUrl: "/images/hero-industrial.jpg",
+  });
+}
 
 function getBrandInitials(name: string) {
   const words = name.replace(/\(.*?\)/g, "").trim().split(/\s+/);
@@ -49,9 +76,33 @@ export default async function HomePage() {
     "One dependable wholesale supplier for factory machine parts, power tools, safety gear, electrical cables, and farm equipment — sourced from 24+ trusted brands and shipped from Secunderabad.";
 
   const waDigits = (settings["whatsapp_number"] || "918522095253").replace(/[^\d]/g, "");
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const homeJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: settings["seo_default_title"] || "Radiant Industrial Co.",
+    description: heroLead,
+    url: origin,
+    primaryImageOfPage: buildAbsoluteUrl(origin, "/images/hero-industrial.jpg"),
+    mainEntity: {
+      "@type": "OfferCatalog",
+      name: "Industrial MRO, Agricultural, Facility & Special Items Catalog",
+      itemListElement: divisionsList.map((d, idx) => ({
+        "@type": "OfferCatalog",
+        position: idx + 1,
+        name: d.name,
+        url: buildAbsoluteUrl(origin, `/divisions/${d.slug}`),
+      })),
+    },
+  };
 
   return (
     <div className="bg-[#F4F4F0]">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(homeJsonLd) }}
+      />
       {/* Full-Bleed Architectural Hero */}
       <section className="relative bg-[#0B0F14] text-white overflow-hidden border-b border-stone-800">
         <img

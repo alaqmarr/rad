@@ -3,16 +3,33 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, Download } from "lucide-react";
 import { getPublicDocuments } from "@/lib/catalog";
-import { getPageBlocks } from "@/lib/settings";
+import { getPageBlocks, getSiteSettings } from "@/lib/settings";
+import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { EditableBlockText } from "@/components/InlineEdit";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Technical Documents, Catalogs & Commercial Terms",
-  description:
-    "Download Radiant Industrial Co. vendor registration profile, commercial terms, product datasheets, and brand catalogs.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const [blocks, settings] = await Promise.all([
+    getPageBlocks("documents"),
+    getSiteSettings(),
+  ]);
+  const origin = await getDetectedSiteOrigin(settings);
+  const title =
+    blocks["page_title"]?.content || "Technical Documents, Catalogs & Commercial Terms";
+  const description =
+    blocks["page_lead"]?.content ||
+    "Download Radiant Industrial Co. vendor registration profile, commercial terms, product datasheets, and brand catalogs.";
+
+  return buildSeoMetadata({
+    origin,
+    path: "/documents",
+    title,
+    description,
+    settings,
+    imageUrl: "/logos/logo-long.png",
+  });
+}
 
 export default async function DocumentsPage({
   searchParams,
@@ -21,10 +38,30 @@ export default async function DocumentsPage({
 }) {
   const sp = await searchParams;
   const activeCat = sp.category || "all";
-  const [docs, blocks] = await Promise.all([
+  const [docs, blocks, settings] = await Promise.all([
     getPublicDocuments(activeCat),
     getPageBlocks("documents"),
+    getSiteSettings(),
   ]);
+  const origin = await getDetectedSiteOrigin(settings);
+
+  const docsJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "CollectionPage",
+        name: "Radiant Industrial Co. Documents & Catalogs",
+        url: buildAbsoluteUrl(origin, "/documents"),
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: origin },
+          { "@type": "ListItem", position: 2, name: "Documents", item: buildAbsoluteUrl(origin, "/documents") },
+        ],
+      },
+    ],
+  };
 
   const categories = [
     { key: "all", label: "All Documents" },
@@ -37,6 +74,10 @@ export default async function DocumentsPage({
 
   return (
     <div className="bg-[#F4F4F0] min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(docsJsonLd) }}
+      />
       <section className="bg-radiant-banner text-white border-b border-stone-800 py-14">
         <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 space-y-3">
           <EditableBlockText
