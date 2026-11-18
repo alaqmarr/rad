@@ -40,6 +40,23 @@ function extractJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+function normalizeSpecs(rawSpecs: unknown): Array<{ label: string; value: string }> {
+  if (Array.isArray(rawSpecs)) {
+    return rawSpecs
+      .map((s) => ({
+        label: String((s as { label?: unknown })?.label || "").trim(),
+        value: String((s as { value?: unknown })?.value || "").trim(),
+      }))
+      .filter((s) => s.label && s.value);
+  }
+  if (rawSpecs && typeof rawSpecs === "object") {
+    return Object.entries(rawSpecs as Record<string, unknown>)
+      .map(([k, v]) => ({ label: String(k).trim(), value: String(v ?? "").trim() }))
+      .filter((s) => s.label && s.value);
+  }
+  return [];
+}
+
 export async function scrapeAndStructureProduct(rawInput: string): Promise<ScrapedProductDraft> {
   const [settings, allDivisions, allCategories, allBrands] = await Promise.all([
     getSiteSettings(),
@@ -99,7 +116,8 @@ Rules:
   if (provider === "anthropic") {
     const body: Record<string, unknown> = {
       model,
-      max_tokens: 1024,
+      max_tokens: 1536,
+      thinking: { type: "disabled" },
       messages: [{ role: "user", content: prompt }],
     };
 
@@ -113,10 +131,6 @@ Rules:
       ];
     }
 
-    if (effort && effort !== "none") {
-      body.output_config = { effort };
-    }
-
     let res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -127,9 +141,9 @@ Rules:
       body: JSON.stringify(body),
     });
 
-    // Retry cleanly if output_config isn't accepted by a model alias
-    if (!res.ok && body.output_config) {
-      delete body.output_config;
+    // Retry cleanly if thinking param isn't accepted by a model alias
+    if (!res.ok && body.thinking) {
+      delete body.thinking;
       res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -142,40 +156,102 @@ Rules:
     }
 
     const data = await res.json();
-    const usage = data?.usage || {};
-    await recordAiUsage({
-      endpoint: "product_lookup",
-      model,
-      clientKey: "admin",
-      inputTokens: Number(usage.input_tokens || 0),
-      outputTokens: Number(usage.output_tokens || 0),
-      cacheReadTokens: Number(usage.cache_read_input_tokens || 0),
-      cacheWriteTokens: Number(usage.cache_creation_input_tokens || 0),
-      webSearches: Number(usage?.server_tool_use?.web_search_requests || 0),
-    });
+    let totalIn = Number(data?.usage?.input_tokens || 0);
+    let totalOut = Number(data?.usage?.output_tokens || 0);
+    let totalCacheRead = Number(data?.usage?.cache_read_input_tokens || 0);
+    let totalCacheWrite = Number(data?.usage?.cache_creation_input_tokens || 0);
+    let totalWeb = Number(data?.usage?.server_tool_use?.web_search_requests || 0);
 
     if (!res.ok) {
+      await recordAiUsage({
+        endpoint: "product_lookup",
+        model,
+        clientKey: "admin",
+        inputTokens: totalIn,
+        outputTokens: totalOut,
+        cacheReadTokens: totalCacheRead,
+        cacheWriteTokens: totalCacheWrite,
+        webSearches: totalWeb,
+      });
       const msg = data?.error?.message || `Anthropic API error (${res.status})`;
       throw new Error(msg);
     }
 
-    const blocks = Array.isArray(data?.content) ? data.content : [];
-    for (const block of blocks) {
-      if (block?.type === "web_search_tool_result" && Array.isArray(block.content)) {
-        for (const item of block.content) {
-          if (item?.url && !sourcesUsed.includes(item.url)) {
-            sourcesUsed.push(item.url);
+    const collectSources = (contentBlocks: Array<Record<string, unknown>>) => {
+      for (const block of contentBlocks) {
+        if (block?.type === "web_search_tool_result" && Array.isArray(block.content)) {
+          for (const item of block.content as Array<{ url?: string }>) {
+            if (item?.url && !sourcesUsed.includes(item.url)) {
+              sourcesUsed.push(item.url);
+            }
           }
         }
       }
-    }
+    };
 
-    const textCombined = blocks
+    const blocks = Array.isArray(data?.content) ? data.content : [];
+    collectSources(blocks);
+
+    let textCombined = blocks
       .filter((b: { type?: string }) => b.type === "text")
       .map((b: { text?: string }) => b.text || "")
       .join("\n");
 
-    const parsed = extractJsonObject(textCombined);
+    let parsed = extractJsonObject(textCombined);
+
+    // Handle pause_turn or unfinished search before JSON output with a clean tool-less continuation
+    if ((!parsed || data?.stop_reason === "pause_turn") && blocks.length > 0) {
+      const contRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1536,
+          messages: [
+            { role: "user", content: prompt },
+            { role: "assistant", content: blocks },
+            {
+              role: "user",
+              content:
+                "Output ONLY the final valid JSON object now (no prose or markdown).",
+            },
+          ],
+        }),
+      });
+      const contData = await contRes.json();
+      totalIn += Number(contData?.usage?.input_tokens || 0);
+      totalOut += Number(contData?.usage?.output_tokens || 0);
+      totalCacheRead += Number(contData?.usage?.cache_read_input_tokens || 0);
+      totalCacheWrite += Number(contData?.usage?.cache_creation_input_tokens || 0);
+
+      if (contRes.ok && Array.isArray(contData?.content)) {
+        collectSources(contData.content);
+        const contText = contData.content
+          .filter((b: { type?: string }) => b.type === "text")
+          .map((b: { text?: string }) => b.text || "")
+          .join("\n");
+        const contParsed = extractJsonObject(contText);
+        if (contParsed) {
+          parsed = contParsed;
+        }
+      }
+    }
+
+    await recordAiUsage({
+      endpoint: "product_lookup",
+      model,
+      clientKey: "admin",
+      inputTokens: totalIn,
+      outputTokens: totalOut,
+      cacheReadTokens: totalCacheRead,
+      cacheWriteTokens: totalCacheWrite,
+      webSearches: totalWeb,
+    });
+
     if (!parsed) {
       throw new Error("AI did not return structured JSON product data. Please try again.");
     }
@@ -197,9 +273,7 @@ Rules:
       gstPercent: Number(parsed.gstPercent) || 18,
       moq: String(parsed.moq || "1 NOS"),
       leadTime: String(parsed.leadTime || "3–7 Working Days"),
-      specifications: Array.isArray(parsed.specifications)
-        ? (parsed.specifications as Array<{ label: string; value: string }>)
-        : [],
+      specifications: normalizeSpecs(parsed.specifications),
       sourcesUsed: sourcesUsed.slice(0, 6),
       usedAi: true,
     };

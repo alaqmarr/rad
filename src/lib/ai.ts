@@ -643,8 +643,10 @@ async function runLlmLoop(params: {
           tools: anthropicTools,
           messages: anthropicMessages,
         };
-        if (effort && effort !== "none") {
+        if (effort === "high" || effort === "medium") {
           body.output_config = { effort };
+        } else {
+          body.thinking = { type: "disabled" };
         }
 
         let res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -657,8 +659,9 @@ async function runLlmLoop(params: {
           body: JSON.stringify(body),
         });
 
-        if (!res.ok && body.output_config) {
+        if (!res.ok && (body.output_config || body.thinking)) {
           delete body.output_config;
+          delete body.thinking;
           res = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: {
