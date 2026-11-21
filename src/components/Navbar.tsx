@@ -60,14 +60,17 @@ export function Navbar({ companyName }: NavbarProps) {
     <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/95 backdrop-blur-md">
       <div className="w-full flex h-[72px] items-center justify-between gap-4 px-4 sm:px-8 lg:px-12 xl:px-16">
         {/* Crisp Brand Mark + Typographic Lockup */}
-        <Link href="/" className="flex items-center gap-2.5 sm:gap-3 shrink-0 group" aria-label={companyName}>
+        <Link href="/" className="flex items-center gap-2.5 sm:gap-3 shrink-0 group">
           <img
             src="/logos/logo-short.png"
-            alt={companyName}
+            alt=""
+            width={40}
+            height={40}
+            decoding="async"
             className="h-9 w-9 sm:h-10 sm:w-10 object-contain"
           />
           <div className="flex flex-col">
-            <span className="font-display text-[16px] sm:text-[17px] font-extrabold tracking-tight text-[#141A21] leading-none group-hover:text-[#EA6A12] transition-colors">
+            <span className="font-display text-[16px] sm:text-[17px] font-extrabold tracking-tight text-[#141A21] leading-none group-hover:text-[#B84700] transition-colors">
               RADIANT
             </span>
             <span className="text-[9px] sm:text-[10px] font-semibold tracking-[0.18em] text-[#4E5D6C] uppercase leading-none mt-1">
@@ -82,8 +85,8 @@ export function Navbar({ companyName }: NavbarProps) {
             href="/products"
             className={`text-sm font-medium transition-colors ${
               pathname?.startsWith("/products")
-                ? "text-[#EA6A12]"
-                : "text-[#141A21] hover:text-[#EA6A12]"
+                ? "text-[#B84700]"
+                : "text-[#141A21] hover:text-[#B84700]"
             }`}
           >
             Products
@@ -94,8 +97,8 @@ export function Navbar({ companyName }: NavbarProps) {
               href="/divisions/industrial"
               className={`inline-flex items-center gap-1 py-6 text-sm font-medium transition-colors ${
                 pathname?.startsWith("/divisions")
-                  ? "text-[#EA6A12]"
-                  : "text-[#141A21] hover:text-[#EA6A12]"
+                  ? "text-[#B84700]"
+                  : "text-[#141A21] hover:text-[#B84700]"
               }`}
             >
               Supply Areas
@@ -111,11 +114,15 @@ export function Navbar({ companyName }: NavbarProps) {
                   <img
                     src={div.image}
                     alt={div.title}
+                    width={48}
+                    height={48}
+                    loading="lazy"
+                    decoding="async"
                     className="w-12 h-12 rounded object-cover shrink-0 border border-stone-200"
                   />
                   <div>
                     <div className="text-sm font-semibold text-[#141A21]">{div.title}</div>
-                    <div className="text-xs text-stone-500 leading-snug mt-0.5">{div.desc}</div>
+                    <div className="text-xs text-stone-600 leading-snug mt-0.5">{div.desc}</div>
                   </div>
                 </Link>
               ))}
@@ -126,8 +133,8 @@ export function Navbar({ companyName }: NavbarProps) {
             href="/brands"
             className={`text-sm font-medium transition-colors ${
               pathname?.startsWith("/brands")
-                ? "text-[#EA6A12]"
-                : "text-[#141A21] hover:text-[#EA6A12]"
+                ? "text-[#B84700]"
+                : "text-[#141A21] hover:text-[#B84700]"
             }`}
           >
             Brands
@@ -137,8 +144,8 @@ export function Navbar({ companyName }: NavbarProps) {
             href="/about"
             className={`text-sm font-medium transition-colors ${
               pathname === "/about"
-                ? "text-[#EA6A12]"
-                : "text-[#141A21] hover:text-[#EA6A12]"
+                ? "text-[#B84700]"
+                : "text-[#141A21] hover:text-[#B84700]"
             }`}
           >
             About Us
@@ -148,8 +155,8 @@ export function Navbar({ companyName }: NavbarProps) {
             href="/contact"
             className={`text-sm font-medium transition-colors ${
               pathname === "/contact"
-                ? "text-[#EA6A12]"
-                : "text-[#141A21] hover:text-[#EA6A12]"
+                ? "text-[#B84700]"
+                : "text-[#141A21] hover:text-[#B84700]"
             }`}
           >
             Contact
@@ -179,7 +186,7 @@ export function Navbar({ companyName }: NavbarProps) {
 
           <Link
             href="/contact"
-            className="rounded-md bg-[#EA6A12] px-4 py-2 text-sm font-semibold text-white hover:bg-[#C95609] transition-colors shrink-0"
+            className="rounded-md bg-[#C24D00] px-4 py-2 text-sm font-semibold text-white hover:bg-[#9E3E00] transition-colors shrink-0"
           >
             Get a Quote
           </Link>

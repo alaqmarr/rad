@@ -105,11 +105,18 @@ export default async function HomePage() {
       />
       {/* Full-Bleed Architectural Hero */}
       <section className="relative bg-[#0B0F14] text-white overflow-hidden border-b border-stone-800">
-        <img
-          src="/images/hero-industrial.jpg"
-          alt="Precision steel bearings, gears, and brass hydraulic fittings"
-          className="absolute inset-0 h-full w-full object-cover object-right opacity-75"
-        />
+        <picture>
+          <source srcSet="/images/hero-industrial.webp" type="image/webp" />
+          <img
+            src="/images/hero-industrial.jpg"
+            alt="Precision steel bearings, gears, and brass hydraulic fittings"
+            width={1280}
+            height={714}
+            fetchPriority="high"
+            decoding="sync"
+            className="absolute inset-0 h-full w-full object-cover object-right opacity-75"
+          />
+        </picture>
         <div className="absolute inset-0 bg-gradient-to-r from-[#0B0F14] via-[#0B0F14]/90 to-[#0B0F14]/35" />
 
         <div className="relative z-10 w-full px-5 sm:px-8 lg:px-12 xl:px-16 pt-16 pb-14 lg:pt-24 lg:pb-20">
@@ -134,7 +141,7 @@ export default async function HomePage() {
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <Link
                 href="/products"
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-6 py-3.5 text-sm font-semibold text-white hover:bg-[#C95609] transition-colors"
+                className="inline-flex items-center gap-2 rounded bg-[#C24D00] px-6 py-3.5 text-sm font-semibold text-white hover:bg-[#9E3E00] transition-colors"
               >
                 Browse All Products
                 <ArrowRight className="w-4 h-4" />
@@ -155,23 +162,23 @@ export default async function HomePage() {
         </div>
 
         {/* Unified Bottom Fact Strip */}
-        <div className="relative z-10 border-t border-white/15 bg-[#0B0F14]/80 backdrop-blur-sm">
+        <div className="relative z-10 border-t border-white/15 bg-[#0B0F14]/85 backdrop-blur-sm">
           <div className="w-full px-5 sm:px-8 lg:px-12 xl:px-16 grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-white/15">
             <div className="py-4 pr-4">
-              <div className="font-mono-num text-xl font-bold text-white">{counts.products}+</div>
-              <div className="text-xs text-stone-400">Ready Catalog Items</div>
+              <div className="font-mono-num text-xl font-bold text-white">{counts.products.toLocaleString("en-IN")}+</div>
+              <div className="text-xs text-stone-300">Ready Catalog Items</div>
             </div>
             <div className="py-4 lg:px-6">
               <div className="font-mono-num text-xl font-bold text-white">{counts.brands}+</div>
-              <div className="text-xs text-stone-400">Trusted Brands Sourced</div>
+              <div className="text-xs text-stone-300">Trusted Brands Sourced</div>
             </div>
             <div className="py-4 lg:px-6">
-              <div className="font-mono-num text-xl font-bold text-white">7–14 Days</div>
-              <div className="text-xs text-stone-400">Standard Pan-India Delivery</div>
+              <div className="font-mono-num text-xl font-bold text-white">Confirmed</div>
+              <div className="text-xs text-stone-300">Dispatch Lead Time Upon Order</div>
             </div>
             <div className="py-4 lg:pl-6">
               <div className="font-mono-num text-xl font-bold text-white">100% GST</div>
-              <div className="text-xs text-stone-400">Tax-Compliant Wholesale Billing</div>
+              <div className="text-xs text-stone-300">Tax-Compliant Wholesale Billing</div>
             </div>
           </div>
         </div>
@@ -298,7 +305,7 @@ export default async function HomePage() {
             </div>
             <Link
               href="/brands"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#EA6A12] hover:underline shrink-0"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#B84700] hover:underline shrink-0"
             >
               See All {counts.brands} Brands <ArrowRight className="w-4 h-4" />
             </Link>
@@ -317,22 +324,26 @@ export default async function HomePage() {
                     <img
                       src={brand.logoUrl}
                       alt={brand.name}
+                      width={36}
+                      height={36}
+                      loading="lazy"
+                      decoding="async"
                       className="h-9 w-9 rounded object-contain shrink-0 bg-stone-50 p-1 border border-stone-200"
                     />
                   ) : (
-                    <div className="w-9 h-9 rounded bg-[#141A21] text-white font-mono text-xs font-bold flex items-center justify-center shrink-0 group-hover:bg-[#EA6A12] transition-colors">
+                    <div className="w-9 h-9 rounded bg-[#141A21] text-white font-mono text-xs font-bold flex items-center justify-center shrink-0 group-hover:bg-[#C24D00] transition-colors">
                       {getBrandInitials(brand.name)}
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-[#141A21] group-hover:text-[#EA6A12] transition-colors truncate">
+                    <div className="text-sm font-bold text-[#141A21] group-hover:text-[#B84700] transition-colors truncate">
                       {shortName}
                     </div>
-                    <div className="text-[11px] text-stone-500 truncate">
+                    <div className="text-[11px] text-stone-600 truncate">
                       {brand.countryOfOrigin}
                     </div>
                   </div>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-stone-300 group-hover:text-[#EA6A12] shrink-0" />
+                  <ArrowUpRight className="w-3.5 h-3.5 text-stone-500 group-hover:text-[#B84700] shrink-0" />
                 </Link>
               );
             })}
@@ -359,21 +370,21 @@ export default async function HomePage() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="rounded-md border border-stone-200 bg-[#F9F9F7] p-7">
-              <div className="font-mono text-xs font-bold text-[#EA6A12] mb-2">STEP 01</div>
+              <div className="font-mono text-xs font-bold text-[#B84700] mb-2">STEP 01</div>
               <h3 className="text-lg font-bold text-[#141A21]">Send Your Item List</h3>
               <p className="mt-2 text-sm text-stone-600 leading-relaxed">
                 Share product names, brands, or upload your requirement sheet via WhatsApp or Email.
               </p>
             </div>
             <div className="rounded-md border border-stone-200 bg-[#F9F9F7] p-7">
-              <div className="font-mono text-xs font-bold text-[#EA6A12] mb-2">STEP 02</div>
+              <div className="font-mono text-xs font-bold text-[#B84700] mb-2">STEP 02</div>
               <h3 className="text-lg font-bold text-[#141A21]">Get Clear GST Pricing</h3>
               <p className="mt-2 text-sm text-stone-600 leading-relaxed">
                 Receive a written quote showing unit prices, brand make, GST, and exact dispatch dates.
               </p>
             </div>
             <div className="rounded-md border border-stone-200 bg-[#F9F9F7] p-7">
-              <div className="font-mono text-xs font-bold text-[#EA6A12] mb-2">STEP 03</div>
+              <div className="font-mono text-xs font-bold text-[#B84700] mb-2">STEP 03</div>
               <h3 className="text-lg font-bold text-[#141A21]">Confirm &amp; Receive Delivery</h3>
               <p className="mt-2 text-sm text-stone-600 leading-relaxed">
                 Confirm with your Purchase Order — dispatch timelines are confirmed upon order and shipped consolidated.
@@ -408,7 +419,7 @@ export default async function HomePage() {
             <div className="flex flex-col sm:flex-row gap-3 shrink-0">
               <Link
                 href="/contact"
-                className="inline-flex items-center justify-center gap-2 rounded bg-[#EA6A12] px-6 py-3.5 text-sm font-semibold text-white hover:bg-[#C95609] transition-colors"
+                className="inline-flex items-center justify-center gap-2 rounded bg-[#C24D00] px-6 py-3.5 text-sm font-semibold text-white hover:bg-[#9E3E00] transition-colors"
               >
                 Send Email Quote Request
                 <ArrowRight className="w-4 h-4" />

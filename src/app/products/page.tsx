@@ -29,9 +29,15 @@ export async function generateMetadata({
     ? `Explore genuine wholesale ${parts.join(", ")} supplies sourced across India by Radiant Industrial Co.`
     : "Browse industrial MRO machine parts, fasteners, bearings, valves, power tools, safety PPE, electricals, agricultural irrigation, facility equipment, and custom Special Items.";
 
+  const canonicalParams = new URLSearchParams();
+  if (sp.division) canonicalParams.set("division", sp.division);
+  if (sp.category) canonicalParams.set("category", sp.category);
+  if (sp.brand) canonicalParams.set("brand", sp.brand);
+  const canonicalPath = canonicalParams.toString() ? `/products?${canonicalParams.toString()}` : "/products";
+
   return buildSeoMetadata({
     origin,
-    path: "/products",
+    path: canonicalPath,
     title: filterTitle,
     description,
     keywords: [
@@ -42,6 +48,7 @@ export async function generateMetadata({
     ],
     settings,
     imageUrl: "/images/div-industrial.jpg",
+    noIndex: Boolean(sp.q),
   });
 }
 

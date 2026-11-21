@@ -137,8 +137,8 @@ export function AiProcurementDrawer() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-stone-700 bg-[#141A21]/95 backdrop-blur-sm px-4 py-2.5 text-xs font-semibold text-white shadow-xl hover:bg-[#EA6A12] hover:border-[#EA6A12] transition-colors cursor-pointer"
-        aria-label="Open Assistant"
+        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-stone-700 bg-[#141A21]/95 backdrop-blur-sm px-4 py-2.5 text-xs font-semibold text-white shadow-xl hover:bg-[#C24D00] hover:border-[#C24D00] transition-colors cursor-pointer"
+        aria-label="Help & Quotes Assistant"
       >
         <Bot className="w-4 h-4 text-[#EA6A12]" />
         <span>Help &amp; Quotes</span>

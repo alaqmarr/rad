@@ -74,6 +74,69 @@ export async function getActiveBrands(featuredOnly = false) {
     .orderBy(asc(brands.sortOrder), asc(brands.name));
 }
 
+export async function getActiveBrandsWithMeta() {
+  await ensureDbReady();
+  const [brandsList, countRows, divRows] = await Promise.all([
+    db
+      .select()
+      .from(brands)
+      .where(eq(brands.isActive, true))
+      .orderBy(asc(brands.sortOrder), asc(brands.name)),
+    db.all<{ brand_id: number; cnt: number }>(
+      sql`SELECT brand_id, COUNT(*) as cnt FROM products WHERE is_active = 1 AND brand_id IS NOT NULL GROUP BY brand_id`
+    ),
+    db.all<{ brand_id: number; div_slug: string; div_name: string }>(
+      sql`SELECT DISTINCT p.brand_id as brand_id, d.slug as div_slug, d.name as div_name
+          FROM products p
+          JOIN divisions d ON d.id = p.division_id
+          WHERE p.is_active = 1 AND p.brand_id IS NOT NULL`
+    ),
+  ]);
+
+  const countsMap = new Map<number, number>();
+  for (const r of countRows) countsMap.set(Number(r.brand_id), Number(r.cnt || 0));
+
+  const divMap = new Map<number, Array<{ slug: string; name: string }>>();
+  for (const r of divRows) {
+    const id = Number(r.brand_id);
+    const list = divMap.get(id) || [];
+    list.push({ slug: r.div_slug, name: r.div_name });
+    divMap.set(id, list);
+  }
+
+  return brandsList.map((b) => ({
+    ...b,
+    productCount: countsMap.get(b.id) || 0,
+    divisions: divMap.get(b.id) || [],
+  }));
+}
+
+export async function getActiveProductCount(): Promise<number> {
+  await ensureDbReady();
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(products)
+    .where(eq(products.isActive, true));
+  return Number(row?.count || 0);
+}
+
+export async function getSitemapProductBatch(limit: number, offset: number) {
+  await ensureDbReady();
+  return db
+    .select({
+      slug: products.slug,
+      updatedAt: products.updatedAt,
+      primaryImageUrl: products.primaryImageUrl,
+      divisionHeroUrl: divisions.heroImageUrl,
+    })
+    .from(products)
+    .leftJoin(divisions, eq(products.divisionId, divisions.id))
+    .where(eq(products.isActive, true))
+    .orderBy(asc(products.id))
+    .limit(limit)
+    .offset(offset);
+}
+
 export async function getBrandBySlug(slug: string) {
   await ensureDbReady();
   const [brand] = await db

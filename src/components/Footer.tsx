@@ -35,7 +35,11 @@ export function Footer({ settings }: FooterProps) {
             <Link href="/" className="inline-flex items-center gap-3 group">
               <img
                 src="/logos/logo-short.png"
-                alt={companyName}
+                alt=""
+                width={40}
+                height={40}
+                loading="lazy"
+                decoding="async"
                 className="h-10 w-10 object-contain"
               />
               <div className="flex flex-col">
@@ -48,7 +52,7 @@ export function Footer({ settings }: FooterProps) {
               </div>
             </Link>
 
-            <p className="text-sm text-stone-400 leading-relaxed max-w-md">
+            <p className="text-sm text-stone-300 leading-relaxed max-w-md">
               <EditableSettingText
                 settingKey="company_tagline"
                 label="Company Tagline"
@@ -57,21 +61,21 @@ export function Footer({ settings }: FooterProps) {
               Your wholesale supply partner for factory machinery parts, tools, safety gear, electrical components, and farm equipment across India.
             </p>
 
-            <div className="text-xs text-stone-400 space-y-1.5 pt-1">
+            <div className="text-xs text-stone-300 space-y-1.5 pt-1">
               <div>
-                <span className="text-stone-500 font-medium mr-2">Office:</span>
+                <span className="text-stone-400 font-medium mr-2">Office:</span>
                 <EditableSettingText settingKey="contact_address" label="HQ Address" value={address} />
               </div>
               <div>
-                <span className="text-stone-500 font-medium mr-2">Phone:</span>
+                <span className="text-stone-400 font-medium mr-2">Phone:</span>
                 <EditableSettingText settingKey="contact_phone" label="Phone" value={phone} />
               </div>
               <div>
-                <span className="text-stone-500 font-medium mr-2">Email:</span>
+                <span className="text-stone-400 font-medium mr-2">Email:</span>
                 <EditableSettingText settingKey="contact_email" label="Email" value={email} />
               </div>
               <div>
-                <span className="text-stone-500 font-medium mr-2">Hours:</span>
+                <span className="text-stone-400 font-medium mr-2">Hours:</span>
                 <EditableSettingText settingKey="operating_hours" label="Operating Hours" value={hours} />
               </div>
             </div>
@@ -79,7 +83,7 @@ export function Footer({ settings }: FooterProps) {
 
           {/* Navigation */}
           <div className="md:col-span-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-4">
               Catalog
             </h3>
             <ul className="space-y-2.5 text-sm text-stone-300">
@@ -92,20 +96,20 @@ export function Footer({ settings }: FooterProps) {
 
           {/* Divisions */}
           <div className="md:col-span-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-4">
               Supply Areas
             </h3>
             <ul className="space-y-2.5 text-sm text-stone-300">
               <li><Link href="/divisions/industrial" className="hover:text-white transition-colors">Industrial &amp; MRO Supply</Link></li>
               <li><Link href="/divisions/agricultural" className="hover:text-white transition-colors">Agricultural Supply</Link></li>
               <li><Link href="/divisions/general" className="hover:text-white transition-colors">General &amp; Facility</Link></li>
-              <li><Link href="/divisions/special-items" className="text-[#EA6A12] hover:text-white transition-colors">Special Items (Custom)</Link></li>
+              <li><Link href="/divisions/special-items" className="text-[#FF984F] hover:text-white transition-colors">Special Items (Custom)</Link></li>
             </ul>
           </div>
 
           {/* Company & Help */}
           <div className="md:col-span-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-4">
               Company &amp; Help
             </h3>
             <ul className="space-y-2.5 text-sm text-stone-300">

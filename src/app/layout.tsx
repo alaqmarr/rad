@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Inter, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
@@ -6,6 +7,7 @@ import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { QuoteSheetDrawer } from "@/components/QuoteSheetDrawer";
 import { AiProcurementDrawer } from "@/components/AiProcurementDrawer";
+import { WebVitalsReporter } from "@/components/WebVitalsReporter";
 import { getSiteSettings } from "@/lib/settings";
 import { buildAbsoluteUrl, getDetectedSiteOrigin } from "@/lib/seo";
 
@@ -118,7 +120,9 @@ export default async function RootLayout({
   const settings = await getSiteSettings();
   const origin = await getDetectedSiteOrigin(settings);
   const companyName = settings["company_name"] || "Radiant Industrial Co.";
-  const gtmId = (settings["google_tag_id"] || "GTM-N7CK5GLP").trim() || "GTM-N7CK5GLP";
+  const rawTagId = (settings["google_tag_id"] || "GTM-N7CK5GLP").trim() || "GTM-N7CK5GLP";
+  const gaMeasurementId = (settings["google_analytics_id"] || (rawTagId.startsWith("G-") ? rawTagId : "")).trim();
+  const gtmId = rawTagId.startsWith("GTM-") ? rawTagId : "GTM-N7CK5GLP";
 
   const orgJsonLd = {
     "@context": "https://schema.org",
@@ -172,25 +176,35 @@ export default async function RootLayout({
       className={`${inter.variable} ${jakarta.variable} ${jetbrains.variable}`}
     >
       <head>
-        <script
-          async
-          src={`https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(gtmId)}`}
-        />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `window.dataLayer = window.dataLayer || [];
-function gtag(){dataLayer.push(arguments);}
-gtag('js', new Date());
-dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});`,
-          }}
-        />
+        <link rel="preconnect" href="https://www.googletagmanager.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
       </head>
       <body className="min-h-screen flex flex-col bg-[#FBFBFA] text-[#141A21] selection:bg-[#EA6A12]/20 selection:text-[#141A21]">
+        <Script id="google-tag-datalayer" strategy="afterInteractive">
+          {`window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+${gaMeasurementId ? `gtag('config', '${gaMeasurementId}', { send_page_view: true });` : ""}
+dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});`}
+        </Script>
+        <Script
+          id="google-tag-manager"
+          strategy="lazyOnload"
+          src={`https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(gtmId)}`}
+        />
+        {gaMeasurementId && (
+          <Script
+            id="google-analytics-gtag"
+            strategy="lazyOnload"
+            src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaMeasurementId)}`}
+          />
+        )}
         <noscript>
           <iframe
             src={`https://www.googletagmanager.com/ns.html?id=${encodeURIComponent(gtmId)}`}
             height="0"
             width="0"
+            title="Google Tag Manager"
             style={{ display: "none", visibility: "hidden" }}
           />
         </noscript>
@@ -202,6 +216,7 @@ dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});`,
           whatsappNumber={settings["whatsapp_number"] || "918522095253"}
           showPublicPrices={settings["show_public_prices"] === "true"}
         >
+          <WebVitalsReporter />
           <Navbar
             logoUrl={settings["logo_primary"] || "/logos/logo-long.png"}
             companyName={companyName}

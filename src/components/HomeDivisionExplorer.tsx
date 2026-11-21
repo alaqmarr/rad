@@ -67,7 +67,7 @@ export function HomeDivisionExplorer({
                       : "text-stone-700 hover:bg-stone-100"
                   }`}
                 >
-                  <span className={`font-mono text-xs ${isActive ? "text-[#EA6A12]" : "text-stone-400"}`}>
+                  <span className={`font-mono text-xs ${isActive ? "text-[#FF984F]" : "text-stone-500"}`}>
                     0{index + 1}
                   </span>
                   <span>{div.name}</span>
@@ -88,11 +88,11 @@ export function HomeDivisionExplorer({
                 onClick={() => setActiveSlug(special.slug)}
                 className={`rounded-md border px-4 py-3 text-sm font-semibold transition-colors cursor-pointer flex items-center gap-2 ${
                   isActive
-                    ? "bg-[#EA6A12] border-[#EA6A12] text-white"
-                    : "bg-white border-[#EA6A12]/50 text-[#141A21] hover:border-[#EA6A12]"
+                    ? "bg-[#C24D00] border-[#C24D00] text-white"
+                    : "bg-white border-[#C24D00]/50 text-[#141A21] hover:border-[#C24D00]"
                 }`}
               >
-                <span className={`font-mono text-xs ${isActive ? "text-white" : "text-[#EA6A12]"}`}>
+                <span className={`font-mono text-xs ${isActive ? "text-white" : "text-[#B84700]"}`}>
                   SPECIAL
                 </span>
                 <span>{special.name}</span>
@@ -106,8 +106,12 @@ export function HomeDivisionExplorer({
         <div className="lg:col-span-5 rounded-md border border-stone-200 bg-[#0F141A] text-white overflow-hidden flex flex-col">
           <div className="aspect-[16/10] w-full overflow-hidden bg-stone-900 shrink-0">
             <img
-              src={activeDiv.heroImageUrl || "/images/div-industrial.jpg"}
+              src={(activeDiv.heroImageUrl || "/images/div-industrial.jpg").replace(/\.jpe?g$/i, ".webp")}
               alt={activeDiv.name}
+              width={960}
+              height={540}
+              loading="lazy"
+              decoding="async"
               className="h-full w-full object-cover"
             />
           </div>
@@ -119,7 +123,7 @@ export function HomeDivisionExplorer({
             <div className="flex flex-wrap gap-3">
               <Link
                 href={`/divisions/${activeDiv.slug}`}
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#C95609] transition-colors"
+                className="inline-flex items-center gap-2 rounded bg-[#C24D00] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#9E3E00] transition-colors"
               >
                 Open {activeDiv.name}
                 <ArrowRight className="w-4 h-4" />
@@ -160,10 +164,10 @@ export function HomeDivisionExplorer({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
-                        <h4 className="text-sm font-bold text-[#141A21] group-hover:text-[#EA6A12] transition-colors">
+                        <h4 className="text-sm font-bold text-[#141A21] group-hover:text-[#B84700] transition-colors">
                           {cat.name}
                         </h4>
-                        <ArrowUpRight className="w-4 h-4 text-stone-400 group-hover:text-[#EA6A12] shrink-0" />
+                        <ArrowUpRight className="w-4 h-4 text-stone-500 group-hover:text-[#B84700] shrink-0" />
                       </div>
                       <p className="mt-1 text-xs text-stone-600 leading-relaxed">
                         {cat.description}
@@ -178,17 +182,17 @@ export function HomeDivisionExplorer({
           {activeCategories.length % 2 === 1 && (
             <Link
               href={`/products?division=${activeDiv.slug}`}
-              className="group rounded-md border border-dashed border-stone-300 bg-[#F9F9F7] p-5 flex flex-col justify-between hover:border-[#EA6A12] hover:bg-white transition-all"
+              className="group rounded-md border border-dashed border-stone-300 bg-[#F9F9F7] p-5 flex flex-col justify-between hover:border-[#C24D00] hover:bg-white transition-all"
             >
               <div>
-                <div className="text-sm font-bold text-[#141A21] group-hover:text-[#EA6A12]">
+                <div className="text-sm font-bold text-[#141A21] group-hover:text-[#B84700]">
                   Need a specific {activeDiv.name} item?
                 </div>
                 <p className="mt-1 text-xs text-stone-600 leading-relaxed">
                   Browse every product in this area or send us your custom requirement list.
                 </p>
               </div>
-              <div className="mt-3 text-xs font-semibold text-[#EA6A12] inline-flex items-center gap-1">
+              <div className="mt-3 text-xs font-semibold text-[#B84700] inline-flex items-center gap-1">
                 Browse {activeDiv.name} <ArrowRight className="w-3.5 h-3.5" />
               </div>
             </Link>
