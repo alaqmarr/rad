@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getActiveBrands,
-  getActiveCategories,
+  getPopulatedCategories,
   getActiveDivisions,
   getSitemapProductBatch,
 } from "@/lib/catalog";
@@ -74,7 +74,7 @@ export async function GET(
   if (id === "core.xml") {
     const [divisions, categories, brands] = await Promise.all([
       getActiveDivisions(),
-      getActiveCategories(),
+      getPopulatedCategories(),
       getActiveBrands(),
     ]);
 
@@ -133,10 +133,10 @@ export async function GET(
     for (const c of categories) {
       urls.push(
         renderUrlEntry({
-          loc: `${baseUrl}/products?category=${encodeURIComponent(c.slug)}`,
+          loc: `${baseUrl}/categories/${c.slug}`,
           lastmod: nowIso,
           changefreq: "weekly",
-          priority: "0.75",
+          priority: "0.85",
         })
       );
     }

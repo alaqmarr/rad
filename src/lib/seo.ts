@@ -49,9 +49,36 @@ export async function getDetectedSiteOrigin(
 }
 
 export function buildAbsoluteUrl(origin: string, path: string): string {
+  const raw = (path || "").trim();
   const cleanOrigin = origin.replace(/\/+$/, "");
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (!raw || raw === "/") return cleanOrigin;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("//")) return `https:${raw}`;
+  const cleanPath = raw.startsWith("/") ? raw : `/${raw}`;
   return cleanPath === "/" ? cleanOrigin : `${cleanOrigin}${cleanPath}`;
+}
+
+export function stripTrailingCompanyName(rawTitle: string, companyName: string): string {
+  let out = rawTitle.trim();
+  if (!out) return out;
+  const escaped = companyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`\\s*[|\\-–—]\\s*${escaped}\\s*$`, "i"),
+    /\s*[|\-–—]\s*Radiant Industrial Co\.?\s*$/i,
+    /\s*[|\-–—]\s*Radiant Industrial Company\s*$/i,
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const re of patterns) {
+      const next = out.replace(re, "").trim();
+      if (next !== out) {
+        out = next;
+        changed = true;
+      }
+    }
+  }
+  return out;
 }
 
 export function buildSeoMetadata(params: {
@@ -66,9 +93,10 @@ export function buildSeoMetadata(params: {
   noIndex?: boolean;
 }): Metadata {
   const companyName = params.settings?.["company_name"] || "Radiant Industrial Co.";
+  const cleanedTitle = stripTrailingCompanyName(params.title, companyName) || params.title;
   const canonical = buildAbsoluteUrl(params.origin, params.path);
   const rawImg = params.imageUrl || params.settings?.["logo_primary"] || "/images/hero-industrial.jpg";
-  const ogImage = rawImg.startsWith("http") ? rawImg : buildAbsoluteUrl(params.origin, rawImg);
+  const ogImage = buildAbsoluteUrl(params.origin, rawImg);
 
   const globalKeywords = (params.settings?.["seo_keywords"] || "")
     .split(",")
@@ -79,7 +107,7 @@ export function buildSeoMetadata(params: {
   ).slice(0, 20);
 
   return {
-    title: params.title,
+    title: cleanedTitle,
     description: params.description,
     keywords: mergedKeywords.length ? mergedKeywords : undefined,
     alternates: {
@@ -90,20 +118,20 @@ export function buildSeoMetadata(params: {
       locale: "en_IN",
       url: canonical,
       siteName: companyName,
-      title: params.title,
+      title: cleanedTitle,
       description: params.description,
       images: [
         {
           url: ogImage,
           width: 1200,
           height: 630,
-          alt: params.title,
+          alt: cleanedTitle,
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: params.title,
+      title: cleanedTitle,
       description: params.description,
       images: [ogImage],
     },

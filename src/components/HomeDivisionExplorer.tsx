@@ -145,7 +145,7 @@ export function HomeDivisionExplorer({
             return (
               <Link
                 key={cat.id}
-                href={`/products?category=${cat.slug}`}
+                href={`/categories/${cat.slug}`}
                 className="group rounded-md border border-stone-200 bg-white overflow-hidden hover:border-stone-400 transition-all flex flex-col justify-between"
               >
                 {cat.thumbnailUrl && (

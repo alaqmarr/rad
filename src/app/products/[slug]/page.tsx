@@ -5,7 +5,12 @@ import { notFound } from "next/navigation";
 import { FileText, Package, ChevronRight, Download } from "lucide-react";
 import { getProductBySlug } from "@/lib/catalog";
 import { getSiteSettings } from "@/lib/settings";
-import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
+import {
+  buildAbsoluteUrl,
+  buildSeoMetadata,
+  getDetectedSiteOrigin,
+  stripTrailingCompanyName,
+} from "@/lib/seo";
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
 import { ProductPrimaryMedia } from "@/components/ProductPrimaryMedia";
@@ -13,6 +18,76 @@ import { htmlToCleanText } from "@/lib/sanitize-text";
 import type { SpecRow } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
+
+const INTERNAL_SKU_PREFIX_RE =
+  /^(?:DMC|KBL|TAP|BSH|MKT|MIT|FLK|BKD|DWT|HKK|ADD|FRM|ALK|TLT|ECO|PFP|DWS|FVL|FEV|FVK|MSL|FVB|BST|LOC|JDL|GODREJ|SUP|PLC|HAV|FES|HNY|NTN|LT-SW|LTV|JAIN|NTF|FLC|UNB|3M|ESAB|NRT|FEN|SKF|GAZ|KRM|UDY|STN|STR)-(.+)$/i;
+
+function extractManufacturerPartNumber(sku: string, specs: SpecRow[]): string {
+  for (const s of specs) {
+    if (
+      /^(mpn|part\s*(number|no\.?|designation)|model(\s*no\.?)?|catalog(?:ue)?\s*(code|no\.?|number))$/i.test(
+        (s.label || "").trim()
+      )
+    ) {
+      const val = (s.value || "").trim();
+      if (val && val.length <= 64 && !/^(n\/?a|as applicable|-)$/i.test(val)) {
+        return val;
+      }
+    }
+  }
+  const match = sku.trim().match(INTERNAL_SKU_PREFIX_RE);
+  return match?.[1]?.trim() || sku.trim();
+}
+
+function normalizeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function titleContainsCode(title: string, code: string): boolean {
+  const normCode = normalizeToken(code);
+  if (normCode.length < 2) return false;
+  return normalizeToken(title).includes(normCode);
+}
+
+function buildCleanProductTitle(
+  cleanName: string,
+  mpn: string,
+  sku: string,
+  rawSeoTitle: string | null | undefined,
+  companyName: string
+): string {
+  let candidate = rawSeoTitle
+    ? stripTrailingCompanyName(htmlToCleanText(rawSeoTitle, true) || rawSeoTitle, companyName)
+    : "";
+
+  if (candidate) {
+    const trailingParen = candidate.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    if (trailingParen) {
+      const base = trailingParen[1].trim();
+      const inside = trailingParen[2].trim();
+      const normInside = normalizeToken(inside);
+      const isKnownCode = normInside === normalizeToken(sku) || normInside === normalizeToken(mpn);
+      if (isKnownCode && titleContainsCode(base, mpn)) {
+        candidate = base;
+      }
+    }
+    if (candidate) return candidate;
+  }
+
+  if (mpn && !titleContainsCode(cleanName, mpn)) {
+    return `${cleanName} (${mpn})`;
+  }
+  return cleanName;
+}
+
+function parseSpecsJson(raw: string | null | undefined): SpecRow[] {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export async function generateMetadata({
   params,
@@ -25,18 +100,30 @@ export async function generateMetadata({
 
   const origin = await getDetectedSiteOrigin(settings);
   const { product, division, category, brand } = data;
+  const companyName = settings["company_name"] || "Radiant Industrial Co.";
+  const cleanName = htmlToCleanText(product.name, true) || product.name;
+  const specs = parseSpecsJson(product.specificationsJson);
+  const mpn = extractManufacturerPartNumber(product.sku, specs);
+  const seoTitle = buildCleanProductTitle(cleanName, mpn, product.sku, product.seoTitle, companyName);
+
+  const rawDesc =
+    product.seoDescription ||
+    product.shortDescription ||
+    `${cleanName} (${mpn}) wholesale supply across India by ${companyName}.`;
+  const cleanMetaDesc =
+    htmlToCleanText(rawDesc, true) ||
+    `${cleanName} wholesale supply across India by ${companyName}.`;
+
   const image = product.primaryImageUrl || division?.heroImageUrl || "/images/hero-industrial.jpg";
 
   return buildSeoMetadata({
     origin,
     path: `/products/${product.slug}`,
-    title: product.seoTitle || `${product.name} (${product.sku})`,
-    description:
-      product.seoDescription ||
-      product.shortDescription ||
-      `${product.name} wholesale supply across India by Radiant Industrial Co.`,
+    title: seoTitle,
+    description: cleanMetaDesc,
     keywords: [
-      product.name,
+      cleanName,
+      mpn,
       product.sku,
       brand?.name || "",
       category?.name || "",
@@ -58,16 +145,14 @@ export default async function ProductDetailPage({
   if (!data) notFound();
 
   const { product, division, category, brand, documents } = data;
+  const companyName = settings["company_name"] || "Radiant Industrial Co.";
   const cleanName = htmlToCleanText(product.name, true) || product.name;
   const cleanShortDesc = htmlToCleanText(product.shortDescription, true);
   const cleanDescription = htmlToCleanText(product.description, false);
-  let specs: SpecRow[] = [];
+  const specs = parseSpecsJson(product.specificationsJson);
+  const mpn = extractManufacturerPartNumber(product.sku, specs);
+
   let gallery: string[] = [];
-  try {
-    specs = JSON.parse(product.specificationsJson || "[]");
-  } catch {
-    specs = [];
-  }
   try {
     gallery = JSON.parse(product.galleryJson || "[]");
   } catch {
@@ -80,18 +165,62 @@ export default async function ProductDetailPage({
     siteUrl,
     product.primaryImageUrl || division?.heroImageUrl || "/images/hero-industrial.jpg"
   );
+  const imagesList = Array.from(
+    new Set([imageUrl, ...gallery.map((g) => buildAbsoluteUrl(siteUrl, g))])
+  );
   const productUrl = buildAbsoluteUrl(siteUrl, `/products/${product.slug}`);
+
+  const hasVerifiedPrice =
+    showPublicPrices &&
+    product.pricingMode === "priced" &&
+    product.basePrice != null &&
+    Number(product.basePrice) > 0;
+
+  const statusLower = (product.inStockStatus || "").toLowerCase();
+  const schemaAvailability =
+    statusLower.includes("in stock") &&
+    !statusLower.includes("confirmed") &&
+    !statusLower.includes("order")
+      ? "https://schema.org/InStock"
+      : "https://schema.org/PreOrder";
+
+  const breadcrumbItems: Array<{ "@type": string; position: number; name: string; item: string }> = [
+    { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
+    { "@type": "ListItem", position: 2, name: "Products", item: `${siteUrl}/products` },
+  ];
+  if (division) {
+    breadcrumbItems.push({
+      "@type": "ListItem",
+      position: breadcrumbItems.length + 1,
+      name: division.name,
+      item: `${siteUrl}/divisions/${division.slug}`,
+    });
+  }
+  if (category) {
+    breadcrumbItems.push({
+      "@type": "ListItem",
+      position: breadcrumbItems.length + 1,
+      name: category.name,
+      item: `${siteUrl}/categories/${category.slug}`,
+    });
+  }
+  breadcrumbItems.push({
+    "@type": "ListItem",
+    position: breadcrumbItems.length + 1,
+    name: cleanName,
+    item: productUrl,
+  });
 
   const productJsonLd = {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "Product",
-        name: product.name,
+        name: cleanName,
         sku: product.sku,
-        mpn: product.sku,
-        image: [imageUrl, ...gallery.map((g) => buildAbsoluteUrl(siteUrl, g))],
-        description: product.description || product.shortDescription,
+        mpn,
+        image: imagesList,
+        description: cleanDescription || cleanShortDesc || undefined,
         brand: brand ? { "@type": "Brand", name: brand.name } : undefined,
         category: category?.name,
         url: productUrl,
@@ -100,42 +229,25 @@ export default async function ProductDetailPage({
           name: s.label,
           value: s.value,
         })),
-        offers: {
-          "@type": "Offer",
-          url: productUrl,
-          priceCurrency: "INR",
-          ...(showPublicPrices && product.pricingMode === "priced" && product.basePrice != null
-            ? { price: product.basePrice }
-            : {}),
-          availability: "https://schema.org/InStock",
-          seller: {
-            "@type": "Organization",
-            name: settings["company_name"] || "Radiant Industrial Co.",
-          },
-        },
+        ...(hasVerifiedPrice
+          ? {
+              offers: {
+                "@type": "Offer",
+                url: productUrl,
+                priceCurrency: "INR",
+                price: product.basePrice,
+                availability: schemaAvailability,
+                seller: {
+                  "@type": "Organization",
+                  name: companyName,
+                },
+              },
+            }
+          : {}),
       },
       {
         "@type": "BreadcrumbList",
-        itemListElement: [
-          { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
-          { "@type": "ListItem", position: 2, name: "Products", item: `${siteUrl}/products` },
-          ...(division
-            ? [
-                {
-                  "@type": "ListItem",
-                  position: 3,
-                  name: division.name,
-                  item: `${siteUrl}/divisions/${division.slug}`,
-                },
-              ]
-            : []),
-          {
-            "@type": "ListItem",
-            position: division ? 4 : 3,
-            name: product.name,
-            item: productUrl,
-          },
-        ],
+        itemListElement: breadcrumbItems,
       },
     ],
   };
@@ -161,8 +273,16 @@ export default async function ProductDetailPage({
               </Link>
             </>
           )}
+          {category && (
+            <>
+              <ChevronRight className="w-3.5 h-3.5" />
+              <Link href={`/categories/${category.slug}`} className="hover:text-[#141A21]">
+                {category.name}
+              </Link>
+            </>
+          )}
           <ChevronRight className="w-3.5 h-3.5" />
-          <span className="font-mono text-[#141A21]">{product.sku}</span>
+          <span className="font-mono text-[#141A21]">{mpn}</span>
         </nav>
 
         {/* Main 12-Col Spec Layout */}
@@ -172,7 +292,7 @@ export default async function ProductDetailPage({
             <div className="aspect-[4/3] w-full rounded-lg border border-stone-200 bg-[#141A21] overflow-hidden flex items-center justify-center relative">
               <ProductPrimaryMedia
                 imageUrl={product.primaryImageUrl}
-                name={product.name}
+                name={cleanName}
                 sku={product.sku}
                 brandName={brand?.name}
                 categoryName={category?.name || division?.name}
@@ -188,7 +308,7 @@ export default async function ProductDetailPage({
                   >
                     <img
                       src={imgUrl}
-                      alt={`${product.name} ${idx + 1}`}
+                      alt={`${cleanName} ${idx + 1}`}
                       loading="lazy"
                       referrerPolicy="no-referrer"
                       className="h-full w-full object-contain p-1"
@@ -206,14 +326,17 @@ export default async function ProductDetailPage({
                 {brand ? (
                   <Link
                     href={`/brands/${brand.slug}`}
-                    className="font-semibold text-[#EA6A12] hover:underline"
+                    className="font-semibold text-[#C24D00] hover:underline"
                   >
                     {brand.name}
                   </Link>
                 ) : (
                   <span className="font-semibold text-stone-600">Multi-Brand Sourcing</span>
                 )}
-                <span className="font-mono text-stone-500">SKU: {product.sku}</span>
+                <div className="flex items-center gap-3 font-mono text-stone-600">
+                  {mpn !== product.sku && <span>MPN: {mpn}</span>}
+                  <span>SKU: {product.sku}</span>
+                </div>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-[#141A21] tracking-tight">
                 {cleanName}

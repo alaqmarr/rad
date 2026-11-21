@@ -63,6 +63,75 @@ export async function getActiveCategories(divisionId?: number) {
     .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
+export async function getCategoryBySlug(slug: string) {
+  await ensureDbReady();
+  const [cat] = await db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.slug, slug), eq(categories.isActive, true)))
+    .limit(1);
+  if (!cat) return null;
+
+  const [division] = await db
+    .select()
+    .from(divisions)
+    .where(and(eq(divisions.id, cat.divisionId), eq(divisions.isActive, true)))
+    .limit(1);
+
+  return { category: cat, division: division || null };
+}
+
+export async function getCategoryProductCount(categoryId: number): Promise<number> {
+  await ensureDbReady();
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(products)
+    .where(and(eq(products.categoryId, categoryId), eq(products.isActive, true)));
+  return Number(row?.count || 0);
+}
+
+export async function getPopulatedCategories() {
+  await ensureDbReady();
+  return db
+    .select({
+      id: categories.id,
+      slug: categories.slug,
+      name: categories.name,
+      divisionId: categories.divisionId,
+    })
+    .from(categories)
+    .innerJoin(products, and(eq(products.categoryId, categories.id), eq(products.isActive, true)))
+    .where(eq(categories.isActive, true))
+    .groupBy(categories.id)
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
+}
+
+export async function getCategoryTopBrands(categoryId: number, limit = 16) {
+  await ensureDbReady();
+  const rows = await db.all<{
+    id: number;
+    slug: string;
+    name: string;
+    logo_url: string | null;
+    cnt: number;
+  }>(
+    sql`SELECT b.id, b.slug, b.name, b.logo_url, COUNT(p.id) as cnt
+        FROM products p
+        JOIN brands b ON b.id = p.brand_id
+        WHERE p.category_id = ${categoryId} AND p.is_active = 1 AND b.is_active = 1
+        GROUP BY b.id
+        ORDER BY cnt DESC, b.name ASC
+        LIMIT ${limit}`
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    slug: r.slug,
+    name: r.name,
+    logoUrl: r.logo_url,
+    productCount: Number(r.cnt || 0),
+  }));
+}
+
 export async function getActiveBrands(featuredOnly = false) {
   await ensureDbReady();
   const conditions = [eq(brands.isActive, true)];

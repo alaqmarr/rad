@@ -2,6 +2,7 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SlidersHorizontal } from "lucide-react";
+import { permanentRedirect } from "next/navigation";
 import {
   getActiveBrands,
   getActiveCategories,
@@ -69,6 +70,10 @@ export default async function ProductsPage({
   const category = sp.category || "";
   const brand = sp.brand || "";
   const pricing = sp.pricing || "all";
+
+  if (category && !q && !brand && !division && (!sp.pricing || sp.pricing === "all")) {
+    permanentRedirect(`/categories/${category}`);
+  }
 
   const [settings, divisionsList, categoriesList, brandsList, items] = await Promise.all([
     getSiteSettings(),
@@ -232,23 +237,29 @@ export default async function ProductsPage({
                 <span className="text-stone-400 hidden group-open:inline">−</span>
               </summary>
               <div className="flex flex-wrap gap-1.5 pt-1">
-                {categoriesList.map((c) => (
-                  <Link
-                    key={c.id}
-                    href={`/products?${new URLSearchParams({
-                      ...(q ? { q } : {}),
-                      category: c.slug,
-                      ...(pricing !== "all" ? { pricing } : {}),
-                    }).toString()}`}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
-                      category === c.slug
-                        ? "bg-[#141A21] text-white font-medium"
-                        : "bg-stone-100 text-stone-700 hover:bg-stone-200"
-                    }`}
-                  >
-                    {c.name}
-                  </Link>
-                ))}
+                {categoriesList.map((c) => {
+                  const isCleanCategoryLink = !q && pricing === "all";
+                  const href = isCleanCategoryLink
+                    ? `/categories/${c.slug}`
+                    : `/products?${new URLSearchParams({
+                        ...(q ? { q } : {}),
+                        category: c.slug,
+                        ...(pricing !== "all" ? { pricing } : {}),
+                      }).toString()}`;
+                  return (
+                    <Link
+                      key={c.id}
+                      href={href}
+                      className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                        category === c.slug
+                          ? "bg-[#141A21] text-white font-medium"
+                          : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+                      }`}
+                    >
+                      {c.name}
+                    </Link>
+                  );
+                })}
               </div>
             </details>
 

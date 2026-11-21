@@ -128,7 +128,7 @@ export default async function DivisionDetailPage({
             <div className="pt-2">
               <Link
                 href="/contact"
-                className="inline-flex items-center gap-2 rounded-md bg-[#EA6A12] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#C95609]"
+                className="inline-flex items-center gap-2 rounded-md bg-[#C24D00] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#9E3E00]"
               >
                 Ask for {division.name} Quote
                 <ArrowRight className="w-4 h-4" />
@@ -156,7 +156,7 @@ export default async function DivisionDetailPage({
             {cats.map((c) => (
               <Link
                 key={c.id}
-                href={`/products?category=${c.slug}`}
+                href={`/categories/${c.slug}`}
                 className="group rounded-md border border-stone-200 bg-[#F9F9F7] overflow-hidden hover:border-stone-400 transition-colors flex items-center gap-4 p-3"
               >
                 {c.thumbnailUrl && (
