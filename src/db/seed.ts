@@ -339,6 +339,14 @@ async function seed() {
       sortOrder: 32,
       description: "Stainless steel hand tools (SS304 & SS316) engineered for critical cleanroom, pharmaceutical, food-grade, chemical, and non-magnetic applications.",
     },
+    {
+      slug: "dmc-tools",
+      name: "DMC Tools",
+      countryOfOrigin: "USA",
+      isFeatured: true,
+      sortOrder: 33,
+      description: "Daniels Manufacturing Corporation (DMC) aerospace, defense & industrial wiring harness crimping tools, turret heads, positioners, insertion/removal tools, Safe-T-Cable, LaceLok, gages, and EWIS tool kits.",
+    },
   ];
 
   const brandMap: Record<string, number> = {};
