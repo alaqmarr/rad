@@ -16,6 +16,18 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "radiantindustrial.in",
       },
+      {
+        protocol: "https",
+        hostname: "dmctools.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.gazelleindustrial.com",
+      },
+      {
+        protocol: "https",
+        hostname: "gazelleindustrial.com",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],

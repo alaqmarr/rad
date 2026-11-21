@@ -84,6 +84,8 @@ export function ProductsManager({
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -266,7 +268,11 @@ export function ProductsManager({
       p.sku.toLowerCase().includes(search.toLowerCase())
   );
 
-  const selection = useBulkSelection(filtered.map((p) => p.id));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedProducts = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const selection = useBulkSelection(pagedProducts.map((p) => p.id));
 
   const handleBulkDelete = async () => {
     if (selection.selectedIds.length === 0) return;
@@ -301,7 +307,10 @@ export function ProductsManager({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           placeholder="Search products by name or SKU..."
           className="w-full sm:w-80 rounded border border-stone-300 bg-white px-3.5 py-2 text-sm outline-none focus:border-[#EA6A12]"
         />
@@ -329,7 +338,7 @@ export function ProductsManager({
       </div>
 
       <BulkSelectionBar
-        totalCount={filtered.length}
+        totalCount={pagedProducts.length}
         selectedCount={selection.selectedIds.length}
         entityLabel="product(s)"
         allSelected={selection.allVisibleSelected}
@@ -360,7 +369,7 @@ export function ProductsManager({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E4E4E0]">
-            {filtered.map((p) => {
+            {pagedProducts.map((p) => {
               const checked = selection.selectedSet.has(p.id);
               return (
                 <tr
@@ -425,6 +434,40 @@ export function ProductsManager({
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#E4E4E0] bg-white px-4 py-2.5 text-xs text-stone-600">
+          <span>
+            Showing{" "}
+            <strong className="text-[#141A21]">
+              {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)}
+            </strong>{" "}
+            of <strong className="text-[#141A21]">{filtered.length.toLocaleString("en-IN")}</strong>{" "}
+            products
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded border border-stone-300 px-3 py-1 font-medium text-[#141A21] hover:border-[#141A21] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+            >
+              Prev
+            </button>
+            <span className="font-mono">
+              Page {safePage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="rounded border border-stone-300 px-3 py-1 font-medium text-[#141A21] hover:border-[#141A21] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#141A21]/60 p-4 overflow-y-auto">

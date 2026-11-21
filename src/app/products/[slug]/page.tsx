@@ -8,7 +8,7 @@ import { getSiteSettings } from "@/lib/settings";
 import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
-import { ProductFallbackVisual } from "@/components/ProductFallbackVisual";
+import { ProductPrimaryMedia } from "@/components/ProductPrimaryMedia";
 import type { SpecRow } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -166,21 +166,13 @@ export default async function ProductDetailPage({
           {/* Left: Product Media */}
           <div className="lg:col-span-5 space-y-4">
             <div className="aspect-[4/3] w-full rounded-lg border border-stone-200 bg-[#141A21] overflow-hidden flex items-center justify-center relative">
-              {product.primaryImageUrl ? (
-                <img
-                  src={product.primaryImageUrl}
-                  alt={product.name}
-                  className="h-full w-full object-contain bg-white p-4"
-                />
-              ) : (
-                <ProductFallbackVisual
-                  name={product.name}
-                  sku={product.sku}
-                  brandName={brand?.name}
-                  categoryName={category?.name || division?.name}
-                  variant="detail"
-                />
-              )}
+              <ProductPrimaryMedia
+                imageUrl={product.primaryImageUrl}
+                name={product.name}
+                sku={product.sku}
+                brandName={brand?.name}
+                categoryName={category?.name || division?.name}
+              />
             </div>
 
             {gallery.length > 0 && (
@@ -190,7 +182,13 @@ export default async function ProductDetailPage({
                     key={idx}
                     className="aspect-square rounded border border-[#E4E4E0] bg-white overflow-hidden"
                   >
-                    <img src={imgUrl} alt={`${product.name} ${idx + 1}`} className="h-full w-full object-cover" />
+                    <img
+                      src={imgUrl}
+                      alt={`${product.name} ${idx + 1}`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-contain p-1"
+                    />
                   </div>
                 ))}
               </div>

@@ -41,6 +41,7 @@ export function ProductCard({ item }: { item: ProductCardData }) {
   const { showPublicPrices, openDirectWhatsApp } = useSiteRuntime();
   const { isEditMode } = useInlineEdit();
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
 
   let quickSpecs: SpecRow[] = [];
   try {
@@ -66,11 +67,14 @@ export function ProductCard({ item }: { item: ProductCardData }) {
       <article className="group flex flex-col justify-between rounded-md border border-stone-200 bg-white overflow-hidden transition-all duration-200 hover:border-stone-400 hover:shadow-md">
         <div>
           <Link href={`/products/${item.slug}`} className="block border-b border-stone-200">
-            {item.primaryImageUrl ? (
+            {item.primaryImageUrl && !imgFailed ? (
               <div className="aspect-[16/10] w-full overflow-hidden bg-[#F8F8F6] flex items-center justify-center p-3">
                 <img
                   src={item.primaryImageUrl}
                   alt={item.name}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={() => setImgFailed(true)}
                   className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
                 />
               </div>
