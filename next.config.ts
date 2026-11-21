@@ -28,6 +28,18 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "gazelleindustrial.com",
       },
+      {
+        protocol: "https",
+        hostname: "karamonline.com",
+      },
+      {
+        protocol: "https",
+        hostname: "assets.udyogisafety.com",
+      },
+      {
+        protocol: "https",
+        hostname: "udyogisafety.com",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],
