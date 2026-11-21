@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "www.stanleytools.com",
       },
+      {
+        protocol: "https",
+        hostname: "media.toolbuy.com",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],
