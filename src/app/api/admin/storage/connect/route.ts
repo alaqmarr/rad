@@ -3,9 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
   discoverCloudflareR2WithToken,
+  finalizeCloudflareWithToken,
   getEnvR2Candidate,
   getR2Config,
   getR2RealtimeStatus,
+  inspectCloudflareApiToken,
   parseR2QuickPaste,
   saveR2SettingsToDb,
   verifyAndAutoCreateBucket,
@@ -21,7 +23,14 @@ export async function POST(req: Request) {
 
   try {
     const body = (await req.json()) as {
-      mode?: "one_click_env" | "one_click_verify" | "smart_paste" | "cloudflare_token" | "manual";
+      mode?:
+        | "cloudflare_inspect"
+        | "cloudflare_finalize"
+        | "one_click_env"
+        | "one_click_verify"
+        | "smart_paste"
+        | "cloudflare_token"
+        | "manual";
       rawPaste?: string;
       cloudflareToken?: string;
       accountId?: string;
@@ -35,6 +44,53 @@ export async function POST(req: Request) {
     const mode = body.mode || "one_click_verify";
     const existing = await getR2Config();
     const createIfMissing = body.createBucketIfMissing !== false;
+
+    if (mode === "cloudflare_inspect") {
+      const inspected = await inspectCloudflareApiToken(
+        body.cloudflareToken || "",
+        body.accountId?.trim() || undefined
+      );
+      return NextResponse.json({ ok: true, inspected });
+    }
+
+    if (mode === "cloudflare_finalize") {
+      const targetBucket = (body.bucketName || existing.bucketName || "radiant-industrial-media").trim();
+      const fin = await finalizeCloudflareWithToken({
+        apiToken: body.cloudflareToken || "",
+        accountId: body.accountId?.trim() || undefined,
+        bucketName: targetBucket,
+        publicUrl: body.publicUrl?.trim() || undefined,
+      });
+
+      await saveR2SettingsToDb({
+        r2_account_id: fin.accountId,
+        r2_access_key_id: fin.accessKeyId,
+        r2_secret_access_key: fin.secretAccessKey,
+        r2_bucket_name: fin.bucketName,
+        r2_public_url: fin.publicUrl,
+      });
+      revalidateCmsCache();
+
+      const status = await getR2RealtimeStatus({ runWriteProbe: false });
+      return NextResponse.json({
+        ok: true,
+        probe: fin.probe,
+        finalized: {
+          accountId: fin.accountId,
+          accountName: fin.accountName,
+          bucketName: fin.bucketName,
+          bucketCreated: fin.bucketCreated,
+          publicUrl: fin.publicUrl,
+          mintedDedicatedToken: fin.mintedDedicatedToken,
+        },
+        status: {
+          ...status,
+          writable: fin.probe.writable,
+          bucketCreated: fin.bucketCreated,
+          probeLatencyMs: fin.probe.probeLatencyMs,
+        },
+      });
+    }
 
     if (mode === "cloudflare_token") {
       const token = (body.cloudflareToken || "").trim();

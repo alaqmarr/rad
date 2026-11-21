@@ -283,6 +283,320 @@ export function parseR2QuickPaste(raw: string): Partial<{
   return out;
 }
 
+export interface CloudflareBucketSummary {
+  name: string;
+  creationDate: string | null;
+}
+
+export interface CloudflareTokenInspection {
+  tokenId: string;
+  tokenScope: "user" | "account";
+  accounts: Array<{ id: string; name: string }>;
+  selectedAccountId: string;
+  selectedAccountName: string;
+  buckets: CloudflareBucketSummary[];
+}
+
+async function cfApiRequest<T = unknown>(
+  token: string,
+  endpoint: string,
+  init?: RequestInit
+): Promise<{ ok: boolean; status: number; result: T | null; errorMessage: string | null }> {
+  const res = await fetch(`https://api.cloudflare.com/client/v4${endpoint}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: Array<{ message?: string; code?: number }>;
+    result?: T;
+  };
+  const errMsg =
+    json.errors?.map((e) => e.message).filter(Boolean).join("; ") ||
+    (!res.ok ? `Cloudflare API HTTP ${res.status}` : null);
+  return {
+    ok: Boolean(json.success && res.ok),
+    status: res.status,
+    result: json.result ?? null,
+    errorMessage: errMsg,
+  };
+}
+
+export async function inspectCloudflareApiToken(
+  rawApiToken: string,
+  preferredAccountId?: string
+): Promise<CloudflareTokenInspection> {
+  const token = rawApiToken.trim();
+  if (!token) throw new Error("Cloudflare API token is required.");
+
+  const accountsRes = await cfApiRequest<Array<{ id: string; name?: string }>>(token, "/accounts");
+  const accountsList = Array.isArray(accountsRes.result)
+    ? accountsRes.result.map((a) => ({ id: a.id, name: a.name || a.id }))
+    : [];
+
+  if (!accountsRes.ok || accountsList.length === 0) {
+    throw new Error(
+      accountsRes.errorMessage ||
+        "Unable to read Cloudflare accounts with this API token. Make sure Account Settings:Read & Workers R2 Storage:Edit permissions are enabled."
+    );
+  }
+
+  const selected =
+    (preferredAccountId ? accountsList.find((a) => a.id === preferredAccountId) : undefined) ||
+    accountsList[0];
+
+  // Verify token ID from either User token endpoint or Account token endpoint
+  let tokenId = "";
+  let tokenScope: "user" | "account" = "user";
+  const userVerify = await cfApiRequest<{ id?: string; status?: string }>(token, "/user/tokens/verify");
+  if (userVerify.ok && userVerify.result?.id) {
+    tokenId = userVerify.result.id;
+    tokenScope = "user";
+  } else {
+    const accVerify = await cfApiRequest<{ id?: string; status?: string }>(
+      token,
+      `/accounts/${selected.id}/tokens/verify`
+    );
+    if (accVerify.ok && accVerify.result?.id) {
+      tokenId = accVerify.result.id;
+      tokenScope = "account";
+    }
+  }
+
+  if (!tokenId) {
+    throw new Error(
+      "Could not verify token ID on Cloudflare. Ensure you copied a valid API Token (not your Global API Key)."
+    );
+  }
+
+  const listRes = await cfApiRequest<{
+    buckets?: Array<{ name: string; creation_date?: string }>;
+  }>(token, `/accounts/${selected.id}/r2/buckets`);
+
+  if (!listRes.ok) {
+    throw new Error(
+      listRes.errorMessage ||
+        "Authenticated account, but failed to list R2 buckets. Ensure Workers R2 Storage:Edit permission is selected."
+    );
+  }
+
+  const buckets: CloudflareBucketSummary[] = Array.isArray(listRes.result?.buckets)
+    ? listRes.result.buckets.map((b) => ({
+        name: b.name,
+        creationDate: b.creation_date || null,
+      }))
+    : [];
+
+  return {
+    tokenId,
+    tokenScope,
+    accounts: accountsList,
+    selectedAccountId: selected.id,
+    selectedAccountName: selected.name,
+    buckets,
+  };
+}
+
+async function resolveOrEnableBucketPublicUrl(
+  token: string,
+  accountId: string,
+  bucketName: string
+): Promise<string> {
+  // Check custom domains first so existing custom CDN URLs are preserved
+  const customRes = await cfApiRequest<{
+    domains?: Array<{ domain?: string; enabled?: boolean; status?: { ownership?: string } }>;
+  }>(token, `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/domains/custom`);
+
+  const activeCustom = customRes.result?.domains?.find((d) => d.enabled && d.domain);
+  if (activeCustom?.domain) {
+    return `https://${activeCustom.domain}`;
+  }
+
+  const domRes = await cfApiRequest<{ enabled?: boolean; domain?: string }>(
+    token,
+    `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/domains/managed`
+  );
+  if (domRes.result?.enabled && domRes.result.domain) {
+    return `https://${domRes.result.domain}`;
+  }
+
+  const enableRes = await cfApiRequest<{ enabled?: boolean; domain?: string }>(
+    token,
+    `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/domains/managed`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    }
+  );
+  if (enableRes.ok && enableRes.result?.domain) {
+    return `https://${enableRes.result.domain}`;
+  }
+
+  return "";
+}
+
+async function mintDedicatedR2S3Token(
+  token: string,
+  accountId: string,
+  bucketName: string
+): Promise<{ accessKeyId: string; secretAccessKey: string } | null> {
+  const groupsRes = await cfApiRequest<Array<{ id: string; name: string }>>(
+    token,
+    `/accounts/${accountId}/tokens/permission_groups`
+  );
+  const groups = Array.isArray(groupsRes.result) ? groupsRes.result : [];
+
+  const findGroupId = (name: string) =>
+    groups.find((g) => g.name.toLowerCase() === name.toLowerCase())?.id;
+
+  const r2AccountWriteId = findGroupId("Workers R2 Storage Write") || "bf7481a1826f439697cb59a20b22293e";
+  const r2BucketReadId = findGroupId("Workers R2 Storage Bucket Item Read");
+  const r2BucketWriteId = findGroupId("Workers R2 Storage Bucket Item Write");
+
+  // Try bucket-scoped S3 token first, then account-scoped R2 Write token
+  const candidatePayloads: Array<{ resources: Record<string, string>; permission_groups: Array<{ id: string }> }> = [
+    ...(r2BucketReadId && r2BucketWriteId
+      ? [
+          {
+            resources: { [`com.cloudflare.edge.r2.bucket.${accountId}_default_${bucketName}`]: "*" },
+            permission_groups: [{ id: r2BucketReadId }, { id: r2BucketWriteId }],
+          },
+        ]
+      : []),
+    {
+      resources: { [`com.cloudflare.api.account.${accountId}`]: "*" },
+      permission_groups: [{ id: r2AccountWriteId }],
+    },
+  ];
+
+  for (const policy of candidatePayloads) {
+    const createRes = await cfApiRequest<{ id?: string; value?: string }>(
+      token,
+      `/accounts/${accountId}/tokens`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: `Radiant Industrial R2 (${bucketName})`,
+          policies: [{ effect: "allow", ...policy }],
+        }),
+      }
+    );
+
+    if (createRes.ok && createRes.result?.id && createRes.result?.value) {
+      return {
+        accessKeyId: createRes.result.id,
+        secretAccessKey: crypto.createHash("sha256").update(createRes.result.value).digest("hex"),
+      };
+    }
+  }
+
+  return null;
+}
+
+export async function finalizeCloudflareWithToken(params: {
+  apiToken: string;
+  accountId?: string;
+  bucketName: string;
+  publicUrl?: string;
+}): Promise<{
+  accountId: string;
+  accountName: string;
+  bucketName: string;
+  bucketCreated: boolean;
+  publicUrl: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  mintedDedicatedToken: boolean;
+  probe: Awaited<ReturnType<typeof verifyAndAutoCreateBucket>>;
+}> {
+  const token = params.apiToken.trim();
+  const targetBucket = params.bucketName.trim();
+  if (!targetBucket) throw new Error("Bucket name is required.");
+
+  const inspected = await inspectCloudflareApiToken(token, params.accountId);
+  const accountId = inspected.selectedAccountId;
+
+  let bucketCreated = false;
+  if (!inspected.buckets.some((b) => b.name === targetBucket)) {
+    const createRes = await cfApiRequest(token, `/accounts/${accountId}/r2/buckets`, {
+      method: "POST",
+      body: JSON.stringify({ name: targetBucket }),
+    });
+    if (!createRes.ok) {
+      throw new Error(createRes.errorMessage || `Failed to create bucket "${targetBucket}"`);
+    }
+    bucketCreated = true;
+  }
+
+  const resolvedPublicUrl =
+    (params.publicUrl || "").trim().replace(/\/+$/, "") ||
+    (await resolveOrEnableBucketPublicUrl(token, accountId, targetBucket));
+
+  // Attempt 1: Derive S3 keys directly from token (token.id + sha256(token))
+  let accessKeyId = inspected.tokenId;
+  let secretAccessKey = crypto.createHash("sha256").update(token).digest("hex");
+  let mintedDedicatedToken = false;
+
+  let probe = await verifyAndAutoCreateBucket(
+    {
+      accountId,
+      accessKeyId,
+      secretAccessKey,
+      bucketName: targetBucket,
+      publicUrl: resolvedPublicUrl,
+      isConfigured: true,
+    },
+    { createIfMissing: false, runWriteProbe: true }
+  );
+
+  // Attempt 2: If direct user token isn't enabled for S3 SigV4, mint a permanent scoped R2 S3 token automatically
+  if (!probe.connected || probe.writable !== true) {
+    const minted = await mintDedicatedR2S3Token(token, accountId, targetBucket);
+    if (minted) {
+      const mintedProbe = await verifyAndAutoCreateBucket(
+        {
+          accountId,
+          accessKeyId: minted.accessKeyId,
+          secretAccessKey: minted.secretAccessKey,
+          bucketName: targetBucket,
+          publicUrl: resolvedPublicUrl,
+          isConfigured: true,
+        },
+        { createIfMissing: false, runWriteProbe: true }
+      );
+      if (mintedProbe.connected && mintedProbe.writable) {
+        accessKeyId = minted.accessKeyId;
+        secretAccessKey = minted.secretAccessKey;
+        mintedDedicatedToken = true;
+        probe = mintedProbe;
+      }
+    }
+  }
+
+  if (!probe.connected || probe.writable === false) {
+    throw new Error(
+      `Bucket "${targetBucket}" was prepared on Cloudflare (${accountId}), but S3 credentials could not authenticate for live read/write (${probe.error || "Invalid S3 mapping"}). Either add "Account API Tokens:Edit" when creating the API token in Cloudflare Dash, or paste an R2 API Token generated in R2 -> Manage API Tokens.`
+    );
+  }
+
+  return {
+    accountId,
+    accountName: inspected.selectedAccountName,
+    bucketName: targetBucket,
+    bucketCreated,
+    publicUrl: resolvedPublicUrl,
+    accessKeyId,
+    secretAccessKey,
+    mintedDedicatedToken,
+    probe,
+  };
+}
+
 export async function discoverCloudflareR2WithToken(params: {
   apiToken: string;
   preferredBucketName?: string;
@@ -295,83 +609,29 @@ export async function discoverCloudflareR2WithToken(params: {
   existingBuckets: string[];
 }> {
   const token = params.apiToken.trim();
-  if (!token) throw new Error("Cloudflare API Token is required.");
-
-  const cfFetch = async (endpoint: string, init?: RequestInit) => {
-    const res = await fetch(`https://api.cloudflare.com/client/v4${endpoint}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        ...(init?.headers || {}),
-      },
-      signal: AbortSignal.timeout(12000),
-    });
-    const json = (await res.json()) as {
-      success: boolean;
-      errors?: Array<{ message: string; code?: number }>;
-      result?: unknown;
-    };
-    return { status: res.status, json };
-  };
-
-  const accountsRes = await cfFetch("/accounts");
-  const accountsList = Array.isArray(accountsRes.json.result)
-    ? (accountsRes.json.result as Array<{ id: string; name: string }>)
-    : [];
-  if (!accountsRes.json.success || accountsList.length === 0) {
-    const msg =
-      accountsRes.json.errors?.[0]?.message ||
-      "Unable to list Cloudflare accounts with this token. Ensure it includes Account Settings:Read & R2:Edit.";
-    throw new Error(msg);
-  }
-
-  const account = accountsList[0];
-  const accountId = account.id;
+  const inspected = await inspectCloudflareApiToken(token);
+  const accountId = inspected.selectedAccountId;
   const targetBucket = (params.preferredBucketName || "radiant-industrial-media").trim();
-
-  // List existing buckets
-  const listRes = await cfFetch(`/accounts/${accountId}/r2/buckets`);
-  const rawBuckets = (listRes.json.result as { buckets?: Array<{ name: string }> } | undefined)?.buckets;
-  const existingBuckets = Array.isArray(rawBuckets) ? rawBuckets.map((b) => b.name) : [];
+  const existingBuckets = inspected.buckets.map((b) => b.name);
 
   let bucketCreated = false;
   if (!existingBuckets.includes(targetBucket)) {
-    const createRes = await cfFetch(`/accounts/${accountId}/r2/buckets`, {
+    const createRes = await cfApiRequest(token, `/accounts/${accountId}/r2/buckets`, {
       method: "POST",
       body: JSON.stringify({ name: targetBucket }),
     });
-    if (!createRes.json.success) {
-      const errMsg = createRes.json.errors?.[0]?.message || "Failed to create R2 bucket via API";
-      throw new Error(errMsg);
+    if (!createRes.ok) {
+      throw new Error(createRes.errorMessage || "Failed to create R2 bucket via API");
     }
     bucketCreated = true;
     existingBuckets.push(targetBucket);
   }
 
-  // Ensure/discover managed r2.dev public domain
-  let publicUrl = "";
-  const domRes = await cfFetch(`/accounts/${accountId}/r2/buckets/${encodeURIComponent(targetBucket)}/domains/managed`);
-  const domResult = domRes.json.result as { enabled?: boolean; domain?: string } | undefined;
-  if (domResult?.enabled && domResult.domain) {
-    publicUrl = `https://${domResult.domain}`;
-  } else {
-    const enableRes = await cfFetch(
-      `/accounts/${accountId}/r2/buckets/${encodeURIComponent(targetBucket)}/domains/managed`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ enabled: true }),
-      }
-    );
-    const enabledResult = enableRes.json.result as { domain?: string } | undefined;
-    if (enableRes.json.success && enabledResult?.domain) {
-      publicUrl = `https://${enabledResult.domain}`;
-    }
-  }
+  const publicUrl = await resolveOrEnableBucketPublicUrl(token, accountId, targetBucket);
 
   return {
     accountId,
-    accountName: account.name || accountId,
+    accountName: inspected.selectedAccountName,
     bucketName: targetBucket,
     bucketCreated,
     publicUrl,

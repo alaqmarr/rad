@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   RefreshCw,
-  Zap,
   HardDrive,
   Database,
   Globe,
@@ -18,10 +17,20 @@ import {
   KeyRound,
   FolderOpen,
   Sparkles,
+  ExternalLink,
+  Plus,
 } from "lucide-react";
 import { sileo } from "sileo";
-import type { R2RealtimeStatus } from "@/lib/r2";
+import type { CloudflareTokenInspection, R2RealtimeStatus } from "@/lib/r2";
 import type { StorageAuditSummary } from "@/lib/storage-audit";
+
+const CLOUDFLARE_CONNECT_URL = `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(
+  JSON.stringify([
+    { key: "account_settings", type: "read" },
+    { key: "workers_r2", type: "edit" },
+    { key: "5bc3f8b21c554832afc660159ab75fa4", type: "edit" },
+  ])
+)}&accountId=*&zoneId=all&name=${encodeURIComponent("Radiant Industrial R2")}`;
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -57,12 +66,21 @@ export function StorageManager({
   const [autoPoll, setAutoPoll] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [inspectingToken, setInspectingToken] = useState(false);
   const [estimating, setEstimating] = useState(false);
 
-  // Connect inputs
-  const [connectTab, setConnectTab] = useState<"smart" | "token" | "manual">("smart");
-  const [rawPaste, setRawPaste] = useState("");
+  // Single-button Cloudflare Connect flow state
+  const [cfFlowOpen, setCfFlowOpen] = useState(false);
   const [cfToken, setCfToken] = useState("");
+  const [inspection, setInspection] = useState<CloudflareTokenInspection | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [bucketMode, setBucketMode] = useState<"existing" | "new">("new");
+  const [newBucketName, setNewBucketName] = useState(savedBucketName || "radiant-industrial-media");
+  const [selectedBucket, setSelectedBucket] = useState(savedBucketName || "radiant-industrial-media");
+  const tokenInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Collapsed advanced fallback inputs
+  const [rawPaste, setRawPaste] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessKeyId, setAccessKeyId] = useState("");
   const [secretAccessKey, setSecretAccessKey] = useState("");
@@ -125,8 +143,117 @@ export function StorageManager({
     return () => clearInterval(timer);
   }, [autoPoll]);
 
+  const handleStartCloudflareConnect = () => {
+    setCfFlowOpen(true);
+    setInspection(null);
+    const width = 980;
+    const height = 760;
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+    window.open(
+      CLOUDFLARE_CONNECT_URL,
+      "cloudflare-r2-auth",
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},noopener`
+    );
+    setTimeout(() => tokenInputRef.current?.focus(), 120);
+  };
+
+  const handleInspectToken = async (tokenOverride?: string, acctOverride?: string) => {
+    const raw = (tokenOverride ?? cfToken).trim();
+    if (!raw) return;
+    setInspectingToken(true);
+    try {
+      const res = await fetch("/api/admin/storage/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "cloudflare_inspect",
+          cloudflareToken: raw,
+          accountId: acctOverride || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Unable to verify Cloudflare API token");
+
+      const insp = data.inspected as CloudflareTokenInspection;
+      setInspection(insp);
+      setSelectedAccountId(insp.selectedAccountId);
+
+      if (insp.buckets.length > 0) {
+        const preferred =
+          insp.buckets.find((b) => b.name === (savedBucketName || "radiant-industrial-media")) ||
+          insp.buckets[0];
+        setBucketMode("existing");
+        setSelectedBucket(preferred.name);
+      } else {
+        setBucketMode("new");
+        setNewBucketName(savedBucketName || "radiant-industrial-media");
+      }
+
+      sileo.success({
+        title: `Authenticated: ${insp.selectedAccountName}`,
+        description:
+          insp.buckets.length > 0
+            ? `Found ${insp.buckets.length} R2 bucket${insp.buckets.length === 1 ? "" : "s"}. Select a bucket to finalize.`
+            : "Account authenticated. Name your new bucket and click Finalize & Connect.",
+      });
+    } catch (err) {
+      setInspection(null);
+      sileo.error({
+        title: "Cloudflare Token Check Failed",
+        description: err instanceof Error ? err.message : "Could not read Cloudflare account or R2 buckets",
+      });
+    } finally {
+      setInspectingToken(false);
+    }
+  };
+
+  const handleFinalizeCloudflare = async () => {
+    const targetBucket = (bucketMode === "existing" ? selectedBucket : newBucketName).trim();
+    if (!targetBucket) {
+      sileo.error({ title: "Bucket Name Required", description: "Choose an existing bucket or enter a new bucket name." });
+      return;
+    }
+    setConnecting(true);
+    try {
+      const res = await fetch("/api/admin/storage/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "cloudflare_finalize",
+          cloudflareToken: cfToken.trim(),
+          accountId: selectedAccountId || inspection?.selectedAccountId,
+          bucketName: targetBucket,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to finalize Cloudflare R2 connection");
+
+      if (data.status) setStatus(data.status);
+      setBucketName(targetBucket);
+      if (data.finalized?.publicUrl) setPublicUrl(data.finalized.publicUrl);
+      setCfToken("");
+      setInspection(null);
+      setCfFlowOpen(false);
+      router.refresh();
+      sileo.success({
+        title: "Cloudflare R2 Connected",
+        description: data.finalized?.bucketCreated
+          ? `Created bucket "${targetBucket}", enabled public CDN, & verified R/W (${data.probe?.probeLatencyMs ?? data.status?.latencyMs} ms).`
+          : `Connected bucket "${targetBucket}" & verified live R/W (${data.probe?.probeLatencyMs ?? data.status?.latencyMs} ms).`,
+      });
+    } catch (err) {
+      sileo.error({
+        title: "Finalization Failed",
+        description: err instanceof Error ? err.message : "Could not finalize R2 connection",
+      });
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const handleConnect = async (
-    mode: "one_click_env" | "one_click_verify" | "smart_paste" | "cloudflare_token" | "manual"
+    mode: "one_click_env" | "one_click_verify" | "smart_paste" | "manual"
   ) => {
     setConnecting(true);
     try {
@@ -136,7 +263,6 @@ export function StorageManager({
         body: JSON.stringify({
           mode,
           rawPaste,
-          cloudflareToken: cfToken,
           accountId,
           accessKeyId,
           secretAccessKey,
@@ -150,26 +276,14 @@ export function StorageManager({
         throw new Error(data.error || "R2 connection failed");
       }
       if (data.status) setStatus(data.status);
-
-      if (data.needsS3Keys && data.discovered) {
-        setAccountId(data.discovered.accountId || "");
-        setBucketName(data.discovered.bucketName || "radiant-industrial-media");
-        if (data.discovered.publicUrl) setPublicUrl(data.discovered.publicUrl);
-        setConnectTab("manual");
-        sileo.success({
-          title: "Account & Bucket Provisioned",
-          description: data.message,
-        });
-      } else {
-        setRawPaste("");
-        router.refresh();
-        sileo.success({
-          title: "Cloudflare R2 Connected",
-          description: data.probe?.bucketCreated
-            ? `Created & verified bucket "${data.status?.bucketName}" (${data.probe?.probeLatencyMs} ms).`
-            : `Live bucket "${data.status?.bucketName}" verified (${data.probe?.probeLatencyMs ?? data.status?.latencyMs} ms).`,
-        });
-      }
+      setRawPaste("");
+      router.refresh();
+      sileo.success({
+        title: "Cloudflare R2 Connected",
+        description: data.probe?.bucketCreated
+          ? `Created & verified bucket "${data.status?.bucketName}" (${data.probe?.probeLatencyMs} ms).`
+          : `Live bucket "${data.status?.bucketName}" verified (${data.probe?.probeLatencyMs ?? data.status?.latencyMs} ms).`,
+      });
     } catch (err) {
       sileo.error({
         title: "Connection Failed",
@@ -421,215 +535,312 @@ export function StorageManager({
         </div>
       </div>
 
-      {/* One-Click Cloudflare R2 Connect */}
+      {/* Single-Button Connect to Cloudflare */}
       <div className="rounded-md border border-[#E4E4E0] bg-white p-6 space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-extrabold text-[#141A21] flex items-center gap-2">
-              <Zap className="w-5 h-5 text-[#EA6A12]" />
-              One-Click Cloudflare R2 Connect
+              <Cloud className="w-5 h-5 text-[#EA6A12]" />
+              Cloudflare R2 Storage Connection
             </h2>
             <p className="text-xs text-stone-600 mt-1">
-              Connect in one click by importing server `.env`, verifying saved credentials, pasting any Cloudflare R2 `.env` / JSON / S3 endpoint snippet, or provisioning via Cloudflare API Token.
+              Click <strong>Connect to Cloudflare</strong> to authorize in your Cloudflare Dashboard, paste your single API key, select or create your R2 bucket, and finalize CDN &amp; S3 access automatically.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {status.envCandidate.available && (
-              <button
-                type="button"
-                onClick={() => handleConnect("one_click_env")}
-                disabled={connecting}
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-4 py-2 text-xs font-bold text-white hover:bg-[#C95609] cursor-pointer disabled:opacity-60"
-              >
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                1-Click Connect from Server .env ({status.envCandidate.bucketName})
-              </button>
-            )}
-            {status.configured && (
-              <button
-                type="button"
-                onClick={() => handleConnect("one_click_verify")}
-                disabled={connecting}
-                className="inline-flex items-center gap-2 rounded bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 cursor-pointer disabled:opacity-60"
-              >
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                1-Click Verify &amp; Auto-Create Bucket
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={handleStartCloudflareConnect}
+            className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#C95609] cursor-pointer transition-colors"
+          >
+            <Cloud className="w-4 h-4" />
+            {status.connected ? "Reconnect / Change R2 Bucket" : "Connect to Cloudflare"}
+            <ExternalLink className="w-3.5 h-3.5 opacity-90" />
+          </button>
         </div>
 
-        {/* Sub-mode tabs */}
-        <div className="flex flex-wrap gap-2 border-b border-stone-200 pb-3">
-          {[
-            { id: "smart", label: "Smart Paste (.env / JSON / S3)" },
-            { id: "token", label: "Cloudflare API Token Discover" },
-            { id: "manual", label: "Manual Keys & Bucket" },
-          ].map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setConnectTab(t.id as "smart" | "token" | "manual")}
-              className={`rounded px-3 py-1.5 text-xs font-semibold cursor-pointer ${
-                connectTab === t.id
-                  ? "bg-[#141A21] text-white"
-                  : "bg-stone-100 text-stone-700 hover:bg-stone-200"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {connectTab === "smart" && (
-          <div className="space-y-3">
-            <textarea
-              rows={4}
-              value={rawPaste}
-              onChange={(e) => setRawPaste(e.target.value)}
-              placeholder={`Paste your Cloudflare R2 details in any format (auto-detected) and click Connect:\nR2_ACCOUNT_ID=...\nR2_ACCESS_KEY_ID=...\nR2_SECRET_ACCESS_KEY=...\nR2_BUCKET_NAME=radiant-industrial-media\nR2_PUBLIC_URL=https://pub-xxxx.r2.dev`}
-              className="w-full rounded border border-stone-300 bg-stone-50 p-3 font-mono text-xs outline-none focus:border-[#EA6A12]"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-[11px] text-stone-500">
-                Supports `.env` blocks, Cloudflare S3 endpoint URLs (`https://&lt;id&gt;.r2.cloudflarestorage.com`), or JSON objects. Auto-creates bucket if missing &amp; verifies live read/write.
-              </span>
-              <button
-                type="button"
-                onClick={() => handleConnect("smart_paste")}
-                disabled={connecting || !rawPaste.trim()}
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#C95609] cursor-pointer disabled:opacity-50"
-              >
-                {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                1-Click Parse, Save &amp; Connect R2
-              </button>
-            </div>
-          </div>
-        )}
-
-        {connectTab === "token" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  Cloudflare API Token (Account Settings:Read + R2:Edit)
+        {(cfFlowOpen || !status.connected || inspection) && (
+          <div className="rounded-md border border-orange-200/80 bg-[#FBF8F4] p-4 space-y-4">
+            {/* Step 1: Single API Key Paste */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-bold text-[#141A21] flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-[#EA6A12]" />
+                  Step 1 — Paste your Cloudflare API Key
                 </label>
+                <a
+                  href={CLOUDFLARE_CONNECT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-semibold text-[#EA6A12] hover:underline inline-flex items-center gap-1"
+                >
+                  Open Cloudflare token page again <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
+                  ref={tokenInputRef}
                   type="password"
                   value={cfToken}
                   onChange={(e) => setCfToken(e.target.value)}
-                  placeholder="Paste Cloudflare API Token to auto-discover Account ID, create bucket & enable r2.dev..."
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData("text").trim();
+                    if (pasted.length >= 28) {
+                      setTimeout(() => void handleInspectToken(pasted), 30);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleInspectToken();
+                    }
+                  }}
+                  placeholder="In Cloudflare Dash click Continue to summary -> Create Token -> Copy & paste here..."
+                  className="flex-1 rounded border border-stone-300 bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
                 />
+                <button
+                  type="button"
+                  onClick={() => handleInspectToken()}
+                  disabled={inspectingToken || !cfToken.trim()}
+                  className="inline-flex items-center justify-center gap-1.5 rounded bg-[#141A21] px-4 py-2 text-xs font-bold text-white hover:bg-stone-800 cursor-pointer disabled:opacity-50"
+                >
+                  {inspectingToken ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Authorizing...
+                    </>
+                  ) : (
+                    "Load Buckets"
+                  )}
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  Target Bucket Name
-                </label>
-                <input
-                  type="text"
-                  value={bucketName}
-                  onChange={(e) => setBucketName(e.target.value)}
-                  placeholder="radiant-industrial-media"
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
+              <p className="text-[11px] text-stone-500">
+                Pasting the key automatically loads your Cloudflare account and R2 buckets. Never stored raw — only scoped bucket access is finalized.
+              </p>
+            </div>
+
+            {/* Step 2: Account & Bucket Picker */}
+            {inspection && (
+              <div className="border-t border-orange-200/80 pt-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-bold text-[#141A21]">
+                      Step 2 — Select R2 Bucket to Connect
+                    </div>
+                    <div className="text-[11px] text-stone-600 font-mono">
+                      Account: <strong>{inspection.selectedAccountName}</strong> ({inspection.selectedAccountId})
+                    </div>
+                  </div>
+                  {inspection.accounts.length > 1 && (
+                    <select
+                      value={selectedAccountId}
+                      onChange={(e) => {
+                        setSelectedAccountId(e.target.value);
+                        void handleInspectToken(cfToken, e.target.value);
+                      }}
+                      className="rounded border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium"
+                    >
+                      {inspection.accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {inspection.buckets.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {inspection.buckets.map((b) => {
+                      const active = bucketMode === "existing" && selectedBucket === b.name;
+                      return (
+                        <button
+                          key={b.name}
+                          type="button"
+                          onClick={() => {
+                            setBucketMode("existing");
+                            setSelectedBucket(b.name);
+                          }}
+                          className={`text-left rounded border p-3 transition-colors cursor-pointer ${
+                            active
+                              ? "border-[#EA6A12] bg-orange-50/70 ring-1 ring-[#EA6A12]"
+                              : "border-stone-200 bg-white hover:border-stone-400"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-xs font-bold text-[#141A21] truncate">
+                              {b.name}
+                            </span>
+                            {active && <CheckCircle2 className="w-4 h-4 text-[#EA6A12] shrink-0" />}
+                          </div>
+                          <div className="text-[10px] text-stone-500 mt-1">
+                            {b.creationDate
+                              ? `Created ${new Date(b.creationDate).toLocaleDateString()}`
+                              : "Existing R2 Bucket"}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setBucketMode("new")}
+                      className={`text-left rounded border border-dashed p-3 transition-colors cursor-pointer ${
+                        bucketMode === "new"
+                          ? "border-[#EA6A12] bg-orange-50/70 ring-1 ring-[#EA6A12]"
+                          : "border-stone-300 bg-white hover:border-stone-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-[#141A21]">
+                        <Plus className="w-4 h-4 text-[#EA6A12]" />
+                        Create New Bucket
+                      </div>
+                      <div className="text-[10px] text-stone-500 mt-1">
+                        Provision a fresh R2 bucket automatically
+                      </div>
+                    </button>
+                  </div>
+                )}
+
+                {bucketMode === "new" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">
+                      New R2 Bucket Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newBucketName}
+                      onChange={(e) => setNewBucketName(e.target.value)}
+                      placeholder="radiant-industrial-media"
+                      className="w-full max-w-md rounded border border-stone-300 bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+                    />
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <span className="text-[11px] text-stone-600">
+                    Automatically creates the bucket if new, enables managed <code>r2.dev</code> public CDN, provisions S3 access &amp; verifies live upload/read probe.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleFinalizeCloudflare}
+                    disabled={
+                      connecting ||
+                      (bucketMode === "existing" ? !selectedBucket.trim() : !newBucketName.trim())
+                    }
+                    className="inline-flex items-center gap-2 rounded bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
+                  >
+                    {connecting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Finalizing &amp; Probing R2...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        Finalize &amp; Connect &quot;{bucketMode === "existing" ? selectedBucket : newBucketName}&quot;
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-[11px] text-stone-500">
-                Calls Cloudflare API v4 to detect your Account ID, create the bucket if needed, and enable managed `r2.dev` public delivery.
-              </span>
-              <button
-                type="button"
-                onClick={() => handleConnect("cloudflare_token")}
-                disabled={connecting || !cfToken.trim()}
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#C95609] cursor-pointer disabled:opacity-50"
-              >
-                {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                Discover Account &amp; Provision Bucket
-              </button>
-            </div>
+            )}
           </div>
         )}
 
-        {connectTab === "manual" && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  Cloudflare Account ID
-                </label>
-                <input
-                  type="text"
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                  placeholder={status.accountIdMasked || "32-character Cloudflare Account ID"}
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
+        {/* Collapsed Advanced Manual / .env Fallback */}
+        <details className="text-xs text-stone-600 border-t border-stone-100 pt-3">
+          <summary className="cursor-pointer font-semibold text-stone-500 hover:text-[#141A21] select-none">
+            Advanced: Manual S3 Keys, Paste Config, or Server .env Import
+          </summary>
+          <div className="mt-4 space-y-4">
+            {status.envCandidate.available && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-stone-200 bg-stone-50 p-3">
+                <span className="text-xs">
+                  Server <code>.env</code> R2 variables detected for bucket <strong>{status.envCandidate.bucketName}</strong>.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleConnect("one_click_env")}
+                  disabled={connecting}
+                  className="inline-flex items-center gap-1.5 rounded bg-[#141A21] px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800 cursor-pointer disabled:opacity-50"
+                >
+                  Import from .env &amp; Connect
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  R2 Access Key ID
-                </label>
-                <input
-                  type="password"
-                  value={accessKeyId}
-                  onChange={(e) => setAccessKeyId(e.target.value)}
-                  placeholder={status.accessKeyMasked || "R2 S3 Access Key ID"}
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
+            )}
+
+            <div className="space-y-2">
+              <label className="block font-semibold text-stone-700">
+                Smart Paste (`.env` / JSON / S3 Endpoint)
+              </label>
+              <textarea
+                rows={3}
+                value={rawPaste}
+                onChange={(e) => setRawPaste(e.target.value)}
+                placeholder={`R2_ACCOUNT_ID=...\nR2_ACCESS_KEY_ID=...\nR2_SECRET_ACCESS_KEY=...\nR2_BUCKET_NAME=radiant-industrial-media\nR2_PUBLIC_URL=https://pub-xxxx.r2.dev`}
+                className="w-full rounded border border-stone-300 bg-stone-50 p-2.5 font-mono text-xs outline-none focus:border-[#EA6A12]"
+              />
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleConnect("smart_paste")}
+                  disabled={connecting || !rawPaste.trim()}
+                  className="rounded bg-[#141A21] px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800 cursor-pointer disabled:opacity-50"
+                >
+                  Parse &amp; Connect
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  R2 Secret Access Key
-                </label>
-                <input
-                  type="password"
-                  value={secretAccessKey}
-                  onChange={(e) => setSecretAccessKey(e.target.value)}
-                  placeholder={status.configured ? "Leave blank to keep saved key" : "R2 S3 Secret Access Key"}
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  R2 Bucket Name
-                </label>
-                <input
-                  type="text"
-                  value={bucketName}
-                  onChange={(e) => setBucketName(e.target.value)}
-                  placeholder="radiant-industrial-media"
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-stone-700 mb-1">
-                  Public CDN URL (r2.dev or custom domain)
-                </label>
-                <input
-                  type="text"
-                  value={publicUrl}
-                  onChange={(e) => setPublicUrl(e.target.value)}
-                  placeholder="https://pub-xxxxxxxxxxxx.r2.dev"
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
-                />
-              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-stone-100 pt-3">
+              <input
+                type="text"
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                placeholder={status.accountIdMasked || "Account ID"}
+                className="rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+              />
+              <input
+                type="password"
+                value={accessKeyId}
+                onChange={(e) => setAccessKeyId(e.target.value)}
+                placeholder={status.accessKeyMasked || "R2 Access Key ID"}
+                className="rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+              />
+              <input
+                type="password"
+                value={secretAccessKey}
+                onChange={(e) => setSecretAccessKey(e.target.value)}
+                placeholder={status.configured ? "Leave blank to keep saved Secret" : "R2 Secret Access Key"}
+                className="rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+              />
+              <input
+                type="text"
+                value={bucketName}
+                onChange={(e) => setBucketName(e.target.value)}
+                placeholder="Bucket Name"
+                className="rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+              />
+              <input
+                type="text"
+                value={publicUrl}
+                onChange={(e) => setPublicUrl(e.target.value)}
+                placeholder="Public CDN URL (https://pub-....r2.dev)"
+                className="md:col-span-2 rounded border border-stone-300 px-3 py-2 text-xs font-mono outline-none focus:border-[#EA6A12]"
+              />
             </div>
             <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() => handleConnect("manual")}
                 disabled={connecting}
-                className="inline-flex items-center gap-2 rounded bg-[#EA6A12] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#C95609] cursor-pointer disabled:opacity-50"
+                className="rounded border border-stone-300 bg-white px-4 py-1.5 text-xs font-semibold text-[#141A21] hover:border-[#141A21] cursor-pointer disabled:opacity-50"
               >
-                {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                Save Credentials &amp; Connect Bucket
+                Save Manual Credentials
               </button>
             </div>
           </div>
-        )}
+        </details>
       </div>
 
       {/* External Image Migration Storage Calculator */}
