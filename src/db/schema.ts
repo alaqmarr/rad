@@ -3,6 +3,7 @@ import {
   text,
   integer,
   real,
+  index,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
@@ -62,102 +63,143 @@ export const divisions = sqliteTable("divisions", {
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
 });
 
-export const categories = sqliteTable("categories", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  description: text("description").notNull().default(""),
-  thumbnailUrl: text("thumbnail_url"),
-  divisionId: integer("division_id")
-    .notNull()
-    .references(() => divisions.id, { onDelete: "cascade" }),
-  sortOrder: integer("sort_order").notNull().default(0),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-});
+export const categories = sqliteTable(
+  "categories",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    thumbnailUrl: text("thumbnail_url"),
+    divisionId: integer("division_id")
+      .notNull()
+      .references(() => divisions.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  },
+  (table) => [
+    index("idx_categories_active_div_sort").on(
+      table.isActive,
+      table.divisionId,
+      table.sortOrder,
+      table.name
+    ),
+  ]
+);
 
-export const brands = sqliteTable("brands", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  logoUrl: text("logo_url"),
-  thumbnailUrl: text("thumbnail_url"),
-  countryOfOrigin: text("country_of_origin").notNull().default("India"),
-  sourcingType: text("sourcing_type").notNull().default("independent"),
-  sourcingNote: text("sourcing_note").notNull().default(""),
-  description: text("description").notNull().default(""),
-  websiteUrl: text("website_url"),
-  isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
-  sortOrder: integer("sort_order").notNull().default(0),
-  seoTitle: text("seo_title").notNull().default(""),
-  seoDescription: text("seo_description").notNull().default(""),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-});
+export const brands = sqliteTable(
+  "brands",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    logoUrl: text("logo_url"),
+    thumbnailUrl: text("thumbnail_url"),
+    countryOfOrigin: text("country_of_origin").notNull().default("India"),
+    sourcingType: text("sourcing_type").notNull().default("independent"),
+    sourcingNote: text("sourcing_note").notNull().default(""),
+    description: text("description").notNull().default(""),
+    websiteUrl: text("website_url"),
+    isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    seoTitle: text("seo_title").notNull().default(""),
+    seoDescription: text("seo_description").notNull().default(""),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  },
+  (table) => [
+    index("idx_brands_active_sort").on(
+      table.isActive,
+      table.isFeatured,
+      table.sortOrder,
+      table.name
+    ),
+  ]
+);
 
-export const products = sqliteTable("products", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  slug: text("slug").notNull().unique(),
-  sku: text("sku").notNull().unique(),
-  name: text("name").notNull(),
-  shortDescription: text("short_description").notNull().default(""),
-  description: text("description").notNull().default(""),
-  divisionId: integer("division_id")
-    .notNull()
-    .references(() => divisions.id),
-  categoryId: integer("category_id")
-    .notNull()
-    .references(() => categories.id),
-  brandId: integer("brand_id").references(() => brands.id, {
-    onDelete: "set null",
-  }),
-  pricingMode: text("pricing_mode").notNull().default("rfq_only"),
-  basePrice: real("base_price"),
-  priceUnit: text("price_unit").notNull().default("NOS"),
-  gstPercent: real("gst_percent").notNull().default(18),
-  moq: text("moq").notNull().default("1 NOS"),
-  leadTime: text("lead_time").notNull().default("3–7 Working Days"),
-  hsnCode: text("hsn_code").notNull().default(""),
-  specificationsJson: text("specifications_json").notNull().default("[]"),
-  primaryImageUrl: text("primary_image_url"),
-  galleryJson: text("gallery_json").notNull().default("[]"),
-  inStockStatus: text("in_stock_status").notNull().default("Available to Order"),
-  isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  seoTitle: text("seo_title").notNull().default(""),
-  seoDescription: text("seo_description").notNull().default(""),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-});
+export const products = sqliteTable(
+  "products",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    slug: text("slug").notNull().unique(),
+    sku: text("sku").notNull().unique(),
+    name: text("name").notNull(),
+    shortDescription: text("short_description").notNull().default(""),
+    description: text("description").notNull().default(""),
+    divisionId: integer("division_id")
+      .notNull()
+      .references(() => divisions.id),
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => categories.id),
+    brandId: integer("brand_id").references(() => brands.id, {
+      onDelete: "set null",
+    }),
+    pricingMode: text("pricing_mode").notNull().default("rfq_only"),
+    basePrice: real("base_price"),
+    priceUnit: text("price_unit").notNull().default("NOS"),
+    gstPercent: real("gst_percent").notNull().default(18),
+    moq: text("moq").notNull().default("1 NOS"),
+    leadTime: text("lead_time").notNull().default("3–7 Working Days"),
+    hsnCode: text("hsn_code").notNull().default(""),
+    specificationsJson: text("specifications_json").notNull().default("[]"),
+    primaryImageUrl: text("primary_image_url"),
+    galleryJson: text("gallery_json").notNull().default("[]"),
+    inStockStatus: text("in_stock_status").notNull().default("Available to Order"),
+    isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    seoTitle: text("seo_title").notNull().default(""),
+    seoDescription: text("seo_description").notNull().default(""),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_products_brand_active_name").on(table.brandId, table.isActive, table.isFeatured, table.name),
+    index("idx_products_cat_active_name").on(table.categoryId, table.isActive, table.isFeatured, table.name),
+    index("idx_products_div_active_name").on(table.divisionId, table.isActive, table.isFeatured, table.name),
+    index("idx_products_active_feat_name").on(table.isActive, table.isFeatured, table.name),
+    index("idx_products_pricing_active").on(table.pricingMode, table.isActive, table.isFeatured, table.name),
+    index("idx_products_updated_at").on(table.updatedAt),
+    index("idx_products_hsn_code").on(table.hsnCode),
+  ]
+);
 
-export const documents = sqliteTable("documents", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  title: text("title").notNull(),
-  slug: text("slug").notNull().unique(),
-  description: text("description").notNull().default(""),
-  category: text("category").notNull().default("datasheet"),
-  fileUrl: text("file_url").notNull(),
-  r2Key: text("r2_key").notNull().default(""),
-  fileName: text("file_name").notNull().default(""),
-  fileSize: integer("file_size").notNull().default(0),
-  mimeType: text("mime_type").notNull().default("application/pdf"),
-  productId: integer("product_id").references(() => products.id, {
-    onDelete: "set null",
-  }),
-  brandId: integer("brand_id").references(() => brands.id, {
-    onDelete: "set null",
-  }),
-  divisionId: integer("division_id").references(() => divisions.id, {
-    onDelete: "set null",
-  }),
-  isPublic: integer("is_public", { mode: "boolean" }).notNull().default(true),
-  downloadCount: integer("download_count").notNull().default(0),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-});
+export const documents = sqliteTable(
+  "documents",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    title: text("title").notNull(),
+    slug: text("slug").notNull().unique(),
+    description: text("description").notNull().default(""),
+    category: text("category").notNull().default("datasheet"),
+    fileUrl: text("file_url").notNull(),
+    r2Key: text("r2_key").notNull().default(""),
+    fileName: text("file_name").notNull().default(""),
+    fileSize: integer("file_size").notNull().default(0),
+    mimeType: text("mime_type").notNull().default("application/pdf"),
+    productId: integer("product_id").references(() => products.id, {
+      onDelete: "set null",
+    }),
+    brandId: integer("brand_id").references(() => brands.id, {
+      onDelete: "set null",
+    }),
+    divisionId: integer("division_id").references(() => divisions.id, {
+      onDelete: "set null",
+    }),
+    isPublic: integer("is_public", { mode: "boolean" }).notNull().default(true),
+    downloadCount: integer("download_count").notNull().default(0),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_documents_public_prod").on(table.isPublic, table.productId),
+    index("idx_documents_public_cat_created").on(table.isPublic, table.category, table.createdAt),
+  ]
+);
 
 export const enquiries = sqliteTable("enquiries", {
   id: integer("id").primaryKey({ autoIncrement: true }),

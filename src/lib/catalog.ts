@@ -1,5 +1,26 @@
-import { db, divisions, categories, brands, products, documents } from "@/db";
+import { db, ensureDbReady, divisions, categories, brands, products, documents } from "@/db";
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
+
+let cachedFtsAvailable: boolean | null = null;
+
+export function buildFtsMatchExpr(rawQuery: string): string | null {
+  const tokens = rawQuery.trim().match(/[a-zA-Z0-9]+/g);
+  if (!tokens || tokens.length === 0) return null;
+  return tokens.map((t) => `"${t}"*`).join(" AND ");
+}
+
+export async function hasProductsFts(): Promise<boolean> {
+  if (cachedFtsAvailable === true) return true;
+  try {
+    const [row] = await db.all<{ name: string }>(
+      sql`SELECT name FROM sqlite_master WHERE type='table' AND name='products_fts' LIMIT 1`
+    );
+    cachedFtsAvailable = Boolean(row?.name);
+    return cachedFtsAvailable;
+  } catch {
+    return false;
+  }
+}
 
 export interface ProductFilterParams {
   q?: string;
@@ -13,6 +34,7 @@ export interface ProductFilterParams {
 }
 
 export async function getActiveDivisions() {
+  await ensureDbReady();
   return db
     .select()
     .from(divisions)
@@ -21,6 +43,7 @@ export async function getActiveDivisions() {
 }
 
 export async function getDivisionBySlug(slug: string) {
+  await ensureDbReady();
   const [div] = await db
     .select()
     .from(divisions)
@@ -30,6 +53,7 @@ export async function getDivisionBySlug(slug: string) {
 }
 
 export async function getActiveCategories(divisionId?: number) {
+  await ensureDbReady();
   const conditions = [eq(categories.isActive, true)];
   if (divisionId) conditions.push(eq(categories.divisionId, divisionId));
   return db
@@ -40,6 +64,7 @@ export async function getActiveCategories(divisionId?: number) {
 }
 
 export async function getActiveBrands(featuredOnly = false) {
+  await ensureDbReady();
   const conditions = [eq(brands.isActive, true)];
   if (featuredOnly) conditions.push(eq(brands.isFeatured, true));
   return db
@@ -50,6 +75,7 @@ export async function getActiveBrands(featuredOnly = false) {
 }
 
 export async function getBrandBySlug(slug: string) {
+  await ensureDbReady();
   const [brand] = await db
     .select()
     .from(brands)
@@ -59,19 +85,8 @@ export async function getBrandBySlug(slug: string) {
 }
 
 export async function queryProducts(filters: ProductFilterParams = {}) {
-  const conditions = [eq(products.isActive, true)];
-
-  if (filters.q && filters.q.trim()) {
-    const pattern = `%${filters.q.trim()}%`;
-    const searchCond = or(
-      like(products.name, pattern),
-      like(products.sku, pattern),
-      like(products.shortDescription, pattern),
-      like(products.description, pattern),
-      like(products.hsnCode, pattern)
-    );
-    if (searchCond) conditions.push(searchCond);
-  }
+  await ensureDbReady();
+  const baseConditions = [eq(products.isActive, true)];
 
   if (filters.division) {
     const [div] = await db
@@ -80,7 +95,7 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
       .where(eq(divisions.slug, filters.division))
       .limit(1);
     if (div) {
-      conditions.push(eq(products.divisionId, div.id));
+      baseConditions.push(eq(products.divisionId, div.id));
     } else {
       return [];
     }
@@ -93,7 +108,7 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
       .where(eq(categories.slug, filters.category))
       .limit(1);
     if (cat) {
-      conditions.push(eq(products.categoryId, cat.id));
+      baseConditions.push(eq(products.categoryId, cat.id));
     } else {
       return [];
     }
@@ -106,42 +121,67 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
       .where(eq(brands.slug, filters.brand))
       .limit(1);
     if (br) {
-      conditions.push(eq(products.brandId, br.id));
+      baseConditions.push(eq(products.brandId, br.id));
     } else {
       return [];
     }
   }
 
   if (filters.pricing === "priced") {
-    conditions.push(eq(products.pricingMode, "priced"));
+    baseConditions.push(eq(products.pricingMode, "priced"));
   } else if (filters.pricing === "rfq_only") {
-    conditions.push(eq(products.pricingMode, "rfq_only"));
+    baseConditions.push(eq(products.pricingMode, "rfq_only"));
   }
 
   if (filters.featuredOnly) {
-    conditions.push(eq(products.isFeatured, true));
+    baseConditions.push(eq(products.isFeatured, true));
   }
 
-  const rows = await db
-    .select({
-      product: products,
-      division: divisions,
-      category: categories,
-      brand: brands,
-    })
-    .from(products)
-    .leftJoin(divisions, eq(products.divisionId, divisions.id))
-    .leftJoin(categories, eq(products.categoryId, categories.id))
-    .leftJoin(brands, eq(products.brandId, brands.id))
-    .where(and(...conditions))
-    .orderBy(desc(products.isFeatured), asc(products.name))
-    .limit(filters.limit ?? 100)
-    .offset(filters.offset ?? 0);
+  const runSelect = (extraConds: typeof baseConditions) =>
+    db
+      .select({
+        product: products,
+        division: divisions,
+        category: categories,
+        brand: brands,
+      })
+      .from(products)
+      .leftJoin(divisions, eq(products.divisionId, divisions.id))
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(brands, eq(products.brandId, brands.id))
+      .where(and(...baseConditions, ...extraConds))
+      .orderBy(desc(products.isFeatured), asc(products.name))
+      .limit(filters.limit ?? 100)
+      .offset(filters.offset ?? 0);
 
-  return rows;
+  const trimmedQ = filters.q?.trim();
+  if (trimmedQ) {
+    const ftsExpr = buildFtsMatchExpr(trimmedQ);
+    if (ftsExpr && (await hasProductsFts())) {
+      const ftsRows = await runSelect([
+        sql`${products.id} IN (SELECT rowid FROM products_fts WHERE products_fts MATCH ${ftsExpr})`,
+      ]);
+      if (ftsRows.length > 0 || trimmedQ.length < 3) {
+        return ftsRows;
+      }
+    }
+
+    const pattern = `%${trimmedQ}%`;
+    const searchCond = or(
+      like(products.name, pattern),
+      like(products.sku, pattern),
+      like(products.shortDescription, pattern),
+      like(products.description, pattern),
+      like(products.hsnCode, pattern)
+    );
+    return runSelect(searchCond ? [searchCond] : []);
+  }
+
+  return runSelect([]);
 }
 
 export async function getProductBySlug(slug: string) {
+  await ensureDbReady();
   const [row] = await db
     .select({
       product: products,
@@ -188,6 +228,7 @@ export async function getPublicDocuments(categoryFilter?: string) {
 }
 
 export async function getCatalogSummaryCounts() {
+  await ensureDbReady();
   const [prodCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(products)

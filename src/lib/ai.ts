@@ -25,6 +25,7 @@ import {
   dispatchWhatsAppMessage,
 } from "./whatsapp";
 import type { EnquiryItem } from "@/db/schema";
+import { buildFtsMatchExpr, hasProductsFts } from "./catalog";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -48,46 +49,85 @@ export interface AssistantResponse {
 
 async function searchInternalProducts(query: string, includeInternalPrices: boolean, limit = 6) {
   const q = query.trim();
-  const pattern = `%${q}%`;
-  const rows = await db
-    .select({
-      id: products.id,
-      slug: products.slug,
-      sku: products.sku,
-      name: products.name,
-      shortDescription: products.shortDescription,
-      pricingMode: products.pricingMode,
-      basePrice: products.basePrice,
-      priceUnit: products.priceUnit,
-      gstPercent: products.gstPercent,
-      leadTime: products.leadTime,
-      moq: products.moq,
-      hsnCode: products.hsnCode,
-      brandName: brands.name,
-      categoryName: categories.name,
-      divisionName: divisions.name,
-    })
-    .from(products)
-    .leftJoin(brands, eq(products.brandId, brands.id))
-    .leftJoin(categories, eq(products.categoryId, categories.id))
-    .leftJoin(divisions, eq(products.divisionId, divisions.id))
-    .where(
-      and(
-        eq(products.isActive, true),
-        or(
-          like(products.name, pattern),
-          like(products.sku, pattern),
-          like(products.shortDescription, pattern),
-          like(products.description, pattern),
-          like(products.specificationsJson, pattern),
-          like(products.hsnCode, pattern),
-          like(brands.name, pattern),
-          like(categories.name, pattern),
-          like(divisions.name, pattern)
+  const selectCols = {
+    id: products.id,
+    slug: products.slug,
+    sku: products.sku,
+    name: products.name,
+    shortDescription: products.shortDescription,
+    pricingMode: products.pricingMode,
+    basePrice: products.basePrice,
+    priceUnit: products.priceUnit,
+    gstPercent: products.gstPercent,
+    leadTime: products.leadTime,
+    moq: products.moq,
+    hsnCode: products.hsnCode,
+    brandName: brands.name,
+    categoryName: categories.name,
+    divisionName: divisions.name,
+  };
+
+  let rows: Array<{
+    id: number;
+    slug: string;
+    sku: string;
+    name: string;
+    shortDescription: string;
+    pricingMode: string;
+    basePrice: number | null;
+    priceUnit: string;
+    gstPercent: number;
+    leadTime: string;
+    moq: string;
+    hsnCode: string;
+    brandName: string | null;
+    categoryName: string | null;
+    divisionName: string | null;
+  }> = [];
+
+  const ftsExpr = buildFtsMatchExpr(q);
+  if (ftsExpr && (await hasProductsFts())) {
+    rows = await db
+      .select(selectCols)
+      .from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id))
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(divisions, eq(products.divisionId, divisions.id))
+      .where(
+        and(
+          eq(products.isActive, true),
+          sql`${products.id} IN (SELECT rowid FROM products_fts WHERE products_fts MATCH ${ftsExpr})`
         )
       )
-    )
-    .limit(limit);
+      .limit(limit);
+  }
+
+  if (rows.length === 0) {
+    const pattern = `%${q}%`;
+    rows = await db
+      .select(selectCols)
+      .from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id))
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .leftJoin(divisions, eq(products.divisionId, divisions.id))
+      .where(
+        and(
+          eq(products.isActive, true),
+          or(
+            like(products.name, pattern),
+            like(products.sku, pattern),
+            like(products.shortDescription, pattern),
+            like(products.description, pattern),
+            like(products.specificationsJson, pattern),
+            like(products.hsnCode, pattern),
+            like(brands.name, pattern),
+            like(categories.name, pattern),
+            like(divisions.name, pattern)
+          )
+        )
+      )
+      .limit(limit);
+  }
 
   return rows.map((r) => ({
     ...r,

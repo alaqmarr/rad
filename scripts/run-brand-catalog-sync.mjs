@@ -11,6 +11,7 @@ const steps = [
   ["npx", ["tsx", "scripts/load-polycab.ts"]],
   ["npx", ["tsx", "scripts/load-havells.ts"]],
   ["npx", ["tsx", "scripts/load-festo.ts"]],
+  ["npx", ["tsx", "scripts/optimize-db.ts"]],
 ];
 
 for (const [cmd, args] of steps) {
