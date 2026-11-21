@@ -1,5 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
+import zlib from "node:zlib";
 import { eq } from "drizzle-orm";
 import { brands, categories, db, products } from "../src/db";
+import { decodeHtmlEntities, htmlToCleanText } from "../src/lib/sanitize-text";
 
 const GRAPHQL_URL = "https://havells.com/graphql";
 
@@ -13,32 +17,12 @@ const TARGET_CATEGORIES = [
 ];
 
 function decodeEntities(str: string): string {
-  return str
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&reg;/gi, "®")
-    .replace(/&trade;/gi, "™")
-    .replace(/&deg;/gi, "°")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;|&#x27;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  return decodeHtmlEntities(str);
 }
 
 function htmlToPlainText(html: string | null | undefined): string {
   if (!html) return "";
-  return decodeEntities(
-    html
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<\/(p|div|li|tr|h[1-6]|br)\s*>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-  )
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n+/g, "\n")
-    .trim();
+  return htmlToCleanText(html, false);
 }
 
 function toSlug(v: string): string {
@@ -67,8 +51,8 @@ function mapCategorySlug(catNames: string[], title: string, fallbackSlug: string
   return fallbackSlug;
 }
 
-async function queryHavells(categoryId: string, page: number, pageSize = 20): Promise<any | null> {
-  for (let attempt = 1; attempt <= 8; attempt++) {
+async function queryHavells(categoryId: string, page: number, pageSize = 20): Promise<{ data: any | null; blocked406: boolean }> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const r = await fetch(GRAPHQL_URL, {
         method: "POST",
@@ -110,13 +94,13 @@ async function queryHavells(categoryId: string, page: number, pageSize = 20): Pr
       if (!parsed?.data?.products) {
         console.warn(`[Havells] cat=${categoryId} page=${page} empty data:`, txt.slice(0, 200));
       }
-      return parsed?.data?.products || null;
+      return { data: parsed?.data?.products || null, blocked406: false };
     } catch (e: any) {
       console.warn(`[Havells] cat=${categoryId} page=${page} attempt=${attempt} err:`, e?.message || e);
       await new Promise((res) => setTimeout(res, 400 * attempt));
     }
   }
-  return null;
+  return { data: null, blocked406: true };
 }
 
 async function main() {
@@ -133,6 +117,7 @@ async function main() {
 
   const toInsert: Array<typeof products.$inferInsert> = [];
   const summary: Array<{ category: string; fetched: number; inserted: number }> = [];
+  let blockedLive = false;
 
   for (const tc of TARGET_CATEGORIES) {
     let page = 1;
@@ -141,7 +126,12 @@ async function main() {
     let inserted = 0;
 
     while (true) {
-      const data = await queryHavells(tc.id, page, 20);
+      const res = await queryHavells(tc.id, page, 20);
+      if (res.blocked406 && page === 1 && fetched === 0) {
+        blockedLive = true;
+        break;
+      }
+      const data = res.data;
       if (!data || !Array.isArray(data.items) || data.items.length === 0) break;
       totalCount = data.total_count || totalCount;
 
@@ -226,9 +216,72 @@ async function main() {
       await new Promise((res) => setTimeout(res, 200));
     }
 
+    if (blockedLive) {
+      console.warn("[Havells] Live endpoint returned HTTP 406 from this host; switching to bundled snapshot...");
+      break;
+    }
+
     console.log(`[Havells] ${tc.name}: fetched=${fetched}, inserted=${inserted}`);
     summary.push({ category: tc.name, fetched, inserted });
     await new Promise((res) => setTimeout(res, 400));
+  }
+
+  let usedSnapshot = false;
+  if (toInsert.length === 0) {
+    const snapPath = path.join(process.cwd(), "scripts", "data", "havells-catalog.json.gz");
+    if (fs.existsSync(snapPath)) {
+      usedSnapshot = true;
+      const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(snapPath)).toString("utf8"));
+      for (const row of rows) {
+        const dbSku = String(row.sku || "").trim();
+        if (!dbSku || existingSkus.has(dbSku)) continue;
+        existingSkus.add(dbSku);
+
+        let safeSlug = String(row.slug || "").trim() || toSlug(`havells-${dbSku}`);
+        if (existingSlugs.has(safeSlug)) {
+          let sfx = 2;
+          while (existingSlugs.has(`${safeSlug}-${sfx}`)) sfx++;
+          safeSlug = `${safeSlug}-${sfx}`;
+        }
+        existingSlugs.add(safeSlug);
+
+        const targetCat =
+          catBySlug[String(row.cat_slug || "")] ||
+          catBySlug["electrical-pneumatic-mro"] ||
+          Object.values(catBySlug)[0];
+
+        toInsert.push({
+          slug: safeSlug,
+          sku: dbSku,
+          name: htmlToCleanText(row.name, true),
+          shortDescription: htmlToCleanText(row.short_description, true),
+          description: htmlToCleanText(row.description, false),
+          divisionId: targetCat.divisionId,
+          categoryId: targetCat.id,
+          brandId: brandRow.id,
+          pricingMode: row.pricing_mode || "rfq_only",
+          basePrice: typeof row.base_price === "number" ? row.base_price : null,
+          priceUnit: row.price_unit || "NOS",
+          gstPercent: typeof row.gst_percent === "number" ? row.gst_percent : 18,
+          moq: row.moq || "1 NOS",
+          leadTime: "Confirmed Upon Order",
+          hsnCode: row.hsn_code || "8536",
+          specificationsJson: row.specifications_json || "[]",
+          primaryImageUrl: row.primary_image_url || null,
+          galleryJson: row.gallery_json || "[]",
+          inStockStatus: row.in_stock_status || "Available to Order",
+          isFeatured: false,
+          isActive: true,
+          seoTitle: htmlToCleanText(row.seo_title, true),
+          seoDescription: htmlToCleanText(row.seo_description, true),
+        });
+      }
+      summary.push({
+        category: "Bundled Snapshot Fallback",
+        fetched: rows.length,
+        inserted: toInsert.length,
+      });
+    }
   }
 
   for (let i = 0; i < toInsert.length; i += 100) {
@@ -239,6 +292,7 @@ async function main() {
     JSON.stringify(
       {
         brand: "havells",
+        usedSnapshot,
         categories: summary,
         totalInserted: toInsert.length,
         withImages: toInsert.filter((x) => Boolean(x.primaryImageUrl)).length,

@@ -24,7 +24,7 @@ async function main() {
   console.log("[optimize-db] Creating composite & covering indexes...");
   await client.executeMultiple(`
     -- Products composite covering indexes with exact (is_featured DESC, name ASC) sort order
-    CREATE INDEX IF NOT EXISTS idx_products_active_feat_name
+    CREATE INDEX IF NOT EXISTS idx_products_active_feat_desc_name
       ON products(is_active, is_featured DESC, name ASC);
     CREATE INDEX IF NOT EXISTS idx_products_brand_active_feat_name
       ON products(brand_id, is_active, is_featured DESC, name ASC);
@@ -42,7 +42,7 @@ async function main() {
       ON products(category_id, is_active, is_featured, name);
     CREATE INDEX IF NOT EXISTS idx_products_div_active_name
       ON products(division_id, is_active, is_featured, name);
-    CREATE INDEX IF NOT EXISTS idx_products_active_feat_name_asc
+    CREATE INDEX IF NOT EXISTS idx_products_active_feat_name
       ON products(is_active, is_featured, name);
     CREATE INDEX IF NOT EXISTS idx_products_pricing_active
       ON products(pricing_mode, is_active, is_featured, name);

@@ -7,6 +7,7 @@ export default defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
   dialect: "turso",
+  tablesFilter: ["!products_fts*"],
   dbCredentials: {
     url: dbUrl,
     ...(authToken ? { authToken } : {}),

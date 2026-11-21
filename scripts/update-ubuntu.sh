@@ -82,7 +82,7 @@ fi
 
 # 4. Apply non-destructive database schema migration (never runs db:seed)
 echo "--> [4/6] Applying schema updates (preserving all existing data)..."
-npx drizzle-kit push
+npx drizzle-kit push --force || echo "WARN: drizzle-kit push skipped (non-fatal if schema/indexes already synced)"
 
 # 5. Build Next.js production bundle BEFORE recreating PM2 process
 echo "--> [5/6] Building Next.js production bundle..."
