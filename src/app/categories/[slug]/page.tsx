@@ -2,14 +2,16 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, ChevronRight, Search, Package } from "lucide-react";
+import { ArrowRight, ChevronRight, Search, Package, Layers, CheckCircle2, HelpCircle } from "lucide-react";
 import {
   getActiveCategories,
   getCategoryBySlug,
   getCategoryProductCount,
   getCategoryTopBrands,
+  getProductsBySlugs,
   queryProducts,
 } from "@/lib/catalog";
+import { getCategoryProcurementGuide } from "@/lib/category-guides";
 import { getSiteSettings } from "@/lib/settings";
 import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib/seo";
 import { ProductCard } from "@/components/ProductCard";
@@ -32,6 +34,7 @@ export async function generateMetadata({
   }
 
   const { category, division } = found;
+  const guide = getCategoryProcurementGuide(category.slug);
   const [totalCount, topBrands, origin] = await Promise.all([
     getCategoryProductCount(category.id),
     getCategoryTopBrands(category.id, 8),
@@ -46,10 +49,10 @@ export async function generateMetadata({
         .join(", ")}`
     : "";
 
-  const title = `${category.name} — Wholesale B2B Supply India${
-    currentPage > 1 ? ` (Page ${currentPage})` : ""
-  }`;
+  const baseTitle = guide?.seoTitle || `${category.name} — Wholesale B2B Supply India`;
+  const title = `${baseTitle}${currentPage > 1 ? ` (Page ${currentPage})` : ""}`;
   const description =
+    guide?.seoDescription ||
     category.description ||
     `Source ${totalCount.toLocaleString("en-IN")}+ genuine ${category.name} products across India${brandSnippet}. Request wholesale GST quotes from Radiant Industrial Co.`;
 
@@ -95,12 +98,17 @@ export default async function CategoryLandingPage({
   if (!found) notFound();
 
   const { category, division } = found;
+  const guide = getCategoryProcurementGuide(category.slug);
   const q = (sp.q || "").trim();
   const brandSlug = (sp.brand || "").trim();
   const currentPage = Math.max(1, Number(sp.page || 1) || 1);
   const offset = (currentPage - 1) * PAGE_SIZE;
 
-  const [totalCount, topBrands, siblingCategories, items, origin] = await Promise.all([
+  const allGuideSlugs = guide
+    ? Array.from(new Set(guide.types.flatMap((t) => t.modelSlugs)))
+    : [];
+
+  const [totalCount, topBrands, siblingCategories, items, guideModels, origin] = await Promise.all([
     getCategoryProductCount(category.id),
     getCategoryTopBrands(category.id, 14),
     division ? getActiveCategories(division.id) : Promise.resolve([]),
@@ -111,9 +119,11 @@ export default async function CategoryLandingPage({
       limit: PAGE_SIZE,
       offset,
     }),
+    getProductsBySlugs(allGuideSlugs),
     getDetectedSiteOrigin(settings),
   ]);
 
+  const guideModelMap = new Map(guideModels.map((m) => [m.product.slug, m]));
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const categoryUrl = buildAbsoluteUrl(origin, `/categories/${category.slug}`);
 
@@ -122,8 +132,9 @@ export default async function CategoryLandingPage({
     "@graph": [
       {
         "@type": "CollectionPage",
-        name: category.name,
+        name: guide?.seoTitle || category.name,
         description:
+          guide?.seoDescription ||
           category.description ||
           `Wholesale ${category.name} catalog supplied across India by Radiant Industrial Co.`,
         url: categoryUrl,
@@ -165,6 +176,21 @@ export default async function CategoryLandingPage({
           },
         ],
       },
+      ...(guide && guide.faqs.length > 0
+        ? [
+            {
+              "@type": "FAQPage",
+              mainEntity: guide.faqs.map((f) => ({
+                "@type": "Question",
+                name: f.question,
+                acceptedAnswer: {
+                  "@type": "Answer",
+                  text: f.answer,
+                },
+              })),
+            },
+          ]
+        : []),
     ],
   };
 
@@ -321,6 +347,75 @@ export default async function CategoryLandingPage({
             )}
           </div>
 
+          {/* Category Sub-Types & Model Links (Page 1 Unfiltered) */}
+          {guide && guide.types.length > 0 && currentPage === 1 && !q && !brandSlug && (
+            <div className="rounded-lg border border-stone-200 bg-white p-5 sm:p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[#C24D00] font-bold">
+                    <Layers className="w-3.5 h-3.5" />
+                    {guide.badgeLabel}
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-extrabold text-[#141A21] mt-0.5">
+                    {guide.typesTitle}
+                  </h2>
+                </div>
+                <span className="text-xs text-stone-600 max-w-md">{guide.introSummary}</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {guide.types.map((t) => {
+                  const linkedModels = t.modelSlugs
+                    .map((s) => guideModelMap.get(s))
+                    .filter((m): m is NonNullable<typeof m> => Boolean(m));
+                  return (
+                    <div
+                      key={t.name}
+                      className="rounded-md border border-stone-200 bg-[#FBFBFA] p-4 space-y-2.5 flex flex-col justify-between"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-sm font-bold text-[#141A21]">{t.name}</h3>
+                          <span className="rounded bg-[#141A21] px-2 py-0.5 text-[10px] font-mono font-semibold text-white">
+                            {t.standard}
+                          </span>
+                        </div>
+                        <div className="text-xs font-mono font-semibold text-[#C24D00]">
+                          {t.specRange}
+                        </div>
+                        <p className="text-xs text-stone-600 leading-relaxed">{t.summary}</p>
+                      </div>
+
+                      {linkedModels.length > 0 && (
+                        <div className="pt-2 border-t border-stone-200/80 space-y-1.5">
+                          <div className="text-[10px] font-mono uppercase tracking-wider text-stone-500">
+                            Featured Models in Catalog:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {linkedModels.map((m) => (
+                              <Link
+                                key={m.product.id}
+                                href={`/products/${m.product.slug}`}
+                                className="inline-flex items-center gap-1 rounded border border-stone-300 bg-white px-2.5 py-1 text-[11px] font-medium text-[#141A21] hover:border-[#C24D00] hover:text-[#C24D00] transition-colors"
+                              >
+                                <span className="font-mono font-bold">
+                                  {m.product.sku.replace(/^(?:FESTO|DMC)-/i, "")}
+                                </span>
+                                <span className="hidden sm:inline truncate max-w-[170px] text-stone-600">
+                                  — {m.product.name}
+                                </span>
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Product Grid */}
           {items.length === 0 ? (
             <div className="rounded-lg border border-stone-200 bg-white p-8 space-y-3">
@@ -422,6 +517,83 @@ export default async function CategoryLandingPage({
                 )}
               </div>
             </nav>
+          )}
+
+          {/* Technical Sizing Matrix, Ordering Checklist & Buyer FAQs */}
+          {guide && (
+            <div className="space-y-6 pt-4">
+              {guide.sizingRows.length > 0 && (
+                <div className="rounded-lg border border-stone-200 bg-white p-5 sm:p-6 space-y-4">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-[#141A21]">{guide.sizingTitle}</h2>
+                    <p className="text-xs text-stone-600 mt-0.5">{guide.introHeadline}</p>
+                  </div>
+                  <div className="overflow-x-auto border border-stone-200 rounded-md">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#141A21] text-white font-mono uppercase tracking-wider text-[11px]">
+                        <tr>
+                          {guide.sizingColumns.map((col) => (
+                            <th key={col} className="px-3.5 py-2.5 font-semibold whitespace-nowrap">
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-200">
+                        {guide.sizingRows.map((row, idx) => (
+                          <tr key={row.series} className={idx % 2 === 0 ? "bg-white" : "bg-[#FBFBFA]"}>
+                            <td className="px-3.5 py-2.5 font-mono font-bold text-[#141A21]">
+                              {row.series}
+                            </td>
+                            <td className="px-3.5 py-2.5 font-medium text-stone-700">{row.standard}</td>
+                            <td className="px-3.5 py-2.5 font-mono text-stone-700">{row.boresOrRange}</td>
+                            <td className="px-3.5 py-2.5 font-mono text-stone-700">{row.strokeOrVariant}</td>
+                            <td className="px-3.5 py-2.5 text-stone-700">{row.cushioningOrRating}</td>
+                            <td className="px-3.5 py-2.5 text-stone-600">{row.portsOrNotes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 rounded-lg border border-stone-200 bg-white p-5 sm:p-6 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-extrabold text-[#141A21]">
+                    <CheckCircle2 className="w-4 h-4 text-[#C24D00] shrink-0" />
+                    <h2>{guide.orderingTitle}</h2>
+                  </div>
+                  <ul className="space-y-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
+                    {guide.orderingChecklist.map((item) => (
+                      <li key={item} className="flex items-start gap-2">
+                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[#C24D00] shrink-0" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {guide.faqs.length > 0 && (
+                  <div className="lg:col-span-6 rounded-lg border border-stone-200 bg-white p-5 sm:p-6 space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-extrabold text-[#141A21]">
+                      <HelpCircle className="w-4 h-4 text-[#C24D00] shrink-0" />
+                      <h2>Procurement FAQs — {category.name}</h2>
+                    </div>
+                    <div className="space-y-3">
+                      {guide.faqs.map((faq) => (
+                        <div key={faq.question} className="border-t border-stone-100 first:border-t-0 pt-2.5 first:pt-0">
+                          <h3 className="text-xs sm:text-sm font-bold text-[#141A21]">
+                            {faq.question}
+                          </h3>
+                          <p className="text-xs text-stone-600 mt-1 leading-relaxed">{faq.answer}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </section>

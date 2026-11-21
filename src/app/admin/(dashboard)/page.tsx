@@ -3,16 +3,19 @@ import { desc, sql } from "drizzle-orm";
 import { db, enquiries, aiConversations } from "@/db";
 import { getCatalogSummaryCounts } from "@/lib/catalog";
 import { getMonthlyAiUsageSummary } from "@/lib/ai-budget";
+import { getQuotePriorityReport } from "@/lib/quote-priority";
 import { EnquiriesManager } from "@/components/EnquiriesManager";
+import { QuotePriorityPanel } from "@/components/QuotePriorityPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOverviewPage() {
-  const [counts, allEnquiries, [aiCount], aiUsage] = await Promise.all([
+  const [counts, allEnquiries, [aiCount], aiUsage, priorityReport] = await Promise.all([
     getCatalogSummaryCounts(),
     db.select().from(enquiries).orderBy(desc(enquiries.createdAt)).limit(100),
     db.select({ count: sql<number>`count(*)` }).from(aiConversations),
     getMonthlyAiUsageSummary(),
+    getQuotePriorityReport(12),
   ]);
 
   const newLeads = allEnquiries.filter((e) => e.status === "new").length;
@@ -69,6 +72,8 @@ export default async function AdminOverviewPage() {
       </div>
 
       <EnquiriesManager enquiries={allEnquiries} />
+
+      <QuotePriorityPanel report={priorityReport} />
     </div>
   );
 }

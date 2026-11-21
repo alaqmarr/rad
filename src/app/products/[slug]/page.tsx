@@ -2,8 +2,8 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileText, Package, ChevronRight, Download } from "lucide-react";
-import { getProductBySlug } from "@/lib/catalog";
+import { FileText, ChevronRight, Download, CheckCircle2, Layers } from "lucide-react";
+import { getCompatibleAndRelatedProducts, getProductBySlug } from "@/lib/catalog";
 import { getSiteSettings } from "@/lib/settings";
 import {
   buildAbsoluteUrl,
@@ -11,33 +11,20 @@ import {
   getDetectedSiteOrigin,
   stripTrailingCompanyName,
 } from "@/lib/seo";
+import {
+  buildEnrichedSpecifications,
+  extractKeySpecHighlights,
+  extractManufacturerPartNumber,
+  extractReferencedPartCodes,
+  getOrderingGuidance,
+  parseSpecsJson,
+} from "@/lib/product-enrichment";
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
 import { ProductPrimaryMedia } from "@/components/ProductPrimaryMedia";
 import { htmlToCleanText } from "@/lib/sanitize-text";
-import type { SpecRow } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
-
-const INTERNAL_SKU_PREFIX_RE =
-  /^(?:DMC|KBL|TAP|BSH|MKT|MIT|FLK|BKD|DWT|HKK|ADD|FRM|ALK|TLT|ECO|PFP|DWS|FVL|FEV|FVK|MSL|FVB|BST|LOC|JDL|GODREJ|SUP|PLC|HAV|FES|HNY|NTN|LT-SW|LTV|JAIN|NTF|FLC|UNB|3M|ESAB|NRT|FEN|SKF|GAZ|KRM|UDY|STN|STR)-(.+)$/i;
-
-function extractManufacturerPartNumber(sku: string, specs: SpecRow[]): string {
-  for (const s of specs) {
-    if (
-      /^(mpn|part\s*(number|no\.?|designation)|model(\s*no\.?)?|catalog(?:ue)?\s*(code|no\.?|number))$/i.test(
-        (s.label || "").trim()
-      )
-    ) {
-      const val = (s.value || "").trim();
-      if (val && val.length <= 64 && !/^(n\/?a|as applicable|-)$/i.test(val)) {
-        return val;
-      }
-    }
-  }
-  const match = sku.trim().match(INTERNAL_SKU_PREFIX_RE);
-  return match?.[1]?.trim() || sku.trim();
-}
 
 function normalizeToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -80,15 +67,6 @@ function buildCleanProductTitle(
   return cleanName;
 }
 
-function parseSpecsJson(raw: string | null | undefined): SpecRow[] {
-  try {
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -102,8 +80,8 @@ export async function generateMetadata({
   const { product, division, category, brand } = data;
   const companyName = settings["company_name"] || "Radiant Industrial Co.";
   const cleanName = htmlToCleanText(product.name, true) || product.name;
-  const specs = parseSpecsJson(product.specificationsJson);
-  const mpn = extractManufacturerPartNumber(product.sku, specs);
+  const rawSpecs = parseSpecsJson(product.specificationsJson);
+  const mpn = extractManufacturerPartNumber(product.sku, rawSpecs);
   const seoTitle = buildCleanProductTitle(cleanName, mpn, product.sku, product.seoTitle, companyName);
 
   const rawDesc =
@@ -149,8 +127,42 @@ export default async function ProductDetailPage({
   const cleanName = htmlToCleanText(product.name, true) || product.name;
   const cleanShortDesc = htmlToCleanText(product.shortDescription, true);
   const cleanDescription = htmlToCleanText(product.description, false);
-  const specs = parseSpecsJson(product.specificationsJson);
-  const mpn = extractManufacturerPartNumber(product.sku, specs);
+  const rawSpecs = parseSpecsJson(product.specificationsJson);
+  const mpn = extractManufacturerPartNumber(product.sku, rawSpecs);
+  const specs = buildEnrichedSpecifications(
+    {
+      name: cleanName,
+      sku: product.sku,
+      shortDescription: cleanShortDesc,
+      description: cleanDescription,
+      hsnCode: product.hsnCode,
+    },
+    rawSpecs,
+    mpn
+  );
+  const keyHighlights = extractKeySpecHighlights(specs);
+  const referencedCodes = extractReferencedPartCodes(
+    {
+      sku: product.sku,
+      slug: product.slug,
+      name: cleanName,
+      shortDescription: cleanShortDesc,
+      description: cleanDescription,
+    },
+    mpn
+  );
+  const compatibleProducts = await getCompatibleAndRelatedProducts({
+    productId: product.id,
+    brandId: product.brandId ?? null,
+    categoryId: product.categoryId,
+    referencedCodes,
+    limit: 6,
+  });
+  const orderingGuidance = getOrderingGuidance({
+    categorySlug: category?.slug,
+    brandSlug: brand?.slug,
+    mpn,
+  });
 
   let gallery: string[] = [];
   try {
@@ -344,6 +356,20 @@ export default async function ProductDetailPage({
               <p className="text-sm sm:text-base text-stone-600 leading-relaxed">
                 {cleanShortDesc}
               </p>
+
+              {keyHighlights.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                  {keyHighlights.map((hl) => (
+                    <div
+                      key={hl.label}
+                      className="rounded border border-stone-200 bg-[#FBFBFA] px-3 py-2 text-xs"
+                    >
+                      <span className="text-stone-500">{hl.label}: </span>
+                      <span className="font-mono font-semibold text-[#141A21]">{hl.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Pricing (Inline editable when Admin is in Edit Mode) */}
@@ -435,47 +461,104 @@ export default async function ProductDetailPage({
               </div>
             )}
 
-            <div className="rounded-md border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs sm:text-sm text-stone-700 leading-relaxed">
-              <strong className="text-[#141A21]">Before Ordering:</strong> Specifications, dimensions, and part revisions can vary by batch. Please confirm your exact technical specifications with our team via WhatsApp or Email before placing an order.
+            <div className="rounded-md border border-amber-200 bg-amber-50/70 p-4 space-y-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
+              <div className="flex items-center gap-2 font-bold text-[#141A21]">
+                <CheckCircle2 className="w-4 h-4 text-[#C24D00] shrink-0" />
+                <span>{orderingGuidance.title}</span>
+              </div>
+              <ul className="space-y-1.5 pl-1">
+                {orderingGuidance.checklist.map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[#C24D00] shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
-          <div className="lg:col-span-5 rounded-md border border-[#E4E4E0] bg-white p-6 sm:p-8 space-y-4">
-            <h2 className="text-lg font-bold text-[#141A21]">
-              Datasheets &amp; Commercial Docs
-            </h2>
-            {documents.length === 0 ? (
-              <p className="text-sm text-stone-500">
-                No product-specific PDF uploaded yet. You can request an OEM datasheet along with your quote, or browse our general{" "}
-                <Link href="/documents" className="text-[#EA6A12] underline">
-                  Documents Hub
-                </Link>
-                .
-              </p>
-            ) : (
-              <div className="space-y-2.5">
-                {documents.map((doc) => (
-                  <a
-                    key={doc.id}
-                    href={doc.fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-3 rounded border border-stone-200 p-3 hover:border-[#EA6A12] transition-colors"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <FileText className="w-4 h-4 text-[#EA6A12] shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-[#141A21] truncate">
-                          {doc.title}
+          <div className="lg:col-span-5 space-y-6">
+            {compatibleProducts.length > 0 && (
+              <div className="rounded-md border border-[#E4E4E0] bg-white p-6 sm:p-8 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#C24D00]" />
+                    <h2 className="text-lg font-bold text-[#141A21]">
+                      Compatible Accessories &amp; Related Models
+                    </h2>
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  {compatibleProducts.map((cp) => {
+                    const cpMpn = extractManufacturerPartNumber(
+                      cp.product.sku,
+                      parseSpecsJson(cp.product.specificationsJson)
+                    );
+                    const cpName = htmlToCleanText(cp.product.name, true) || cp.product.name;
+                    return (
+                      <Link
+                        key={cp.product.id}
+                        href={`/products/${cp.product.slug}`}
+                        className="flex items-center justify-between gap-3 rounded border border-stone-200 bg-[#FBFBFA] p-3 hover:border-[#C24D00] transition-colors group"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-[#C24D00]">
+                              {cpMpn}
+                            </span>
+                            <span className="rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-mono uppercase text-stone-700">
+                              {cp.matchReason === "compatible" ? "Compatible" : "Related"}
+                            </span>
+                          </div>
+                          <div className="text-xs sm:text-sm font-semibold text-[#141A21] group-hover:text-[#C24D00] truncate mt-0.5">
+                            {cpName}
+                          </div>
                         </div>
-                        <div className="text-xs font-mono text-stone-500">{doc.fileName}</div>
-                      </div>
-                    </div>
-                    <Download className="w-4 h-4 text-stone-400 shrink-0" />
-                  </a>
-                ))}
+                        <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-[#C24D00] shrink-0" />
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             )}
+
+            <div className="rounded-md border border-[#E4E4E0] bg-white p-6 sm:p-8 space-y-4">
+              <h2 className="text-lg font-bold text-[#141A21]">
+                Datasheets &amp; Commercial Docs
+              </h2>
+              {documents.length === 0 ? (
+                <p className="text-sm text-stone-600">
+                  No product-specific PDF uploaded yet. You can request an OEM datasheet along with your quote, or browse our general{" "}
+                  <Link href="/documents" className="text-[#C24D00] font-semibold underline">
+                    Documents Hub
+                  </Link>
+                  .
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {documents.map((doc) => (
+                    <a
+                      key={doc.id}
+                      href={doc.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between gap-3 rounded border border-stone-200 p-3 hover:border-[#C24D00] transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-4 h-4 text-[#C24D00] shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-[#141A21] truncate">
+                            {doc.title}
+                          </div>
+                          <div className="text-xs font-mono text-stone-500">{doc.fileName}</div>
+                        </div>
+                      </div>
+                      <Download className="w-4 h-4 text-stone-400 shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

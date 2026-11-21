@@ -202,12 +202,13 @@ async function seed() {
     // Industrial & MRO Supply (8 categories)
     { slug: "fasteners-fixing", name: "Fasteners & Fixing Hardware", divisionSlug: "industrial", sortOrder: 1, description: "High-tensile hex bolts (8.8/10.9), SS 304/316 screws, nuts, washers, anchors, and rivets." },
     { slug: "bearings-transmission", name: "Bearings, Belts & Power Transmission", divisionSlug: "industrial", sortOrder: 2, description: "Ball & roller bearings, pillow blocks, V-belts, roller chains, sprockets, oil seals & O-rings." },
-    { slug: "valves-pipes-flow", name: "Valves, Pipes & Flow Control", divisionSlug: "industrial", sortOrder: 3, description: "Ball, gate & butterfly valves, pneumatic cylinders, hydraulic pumps, hoses, flanges & clamps." },
-    { slug: "tools-cutting-machining", name: "Hand, Power & Cutting Tools", divisionSlug: "industrial", sortOrder: 4, description: "Angle grinders, drills, spanners, torque wrenches, HSS drill bits, end mills & carbide inserts." },
-    { slug: "welding-fabrication", name: "Welding & Fabrication", divisionSlug: "industrial", sortOrder: 5, description: "Welding machines, auto-darkening helmets, Kevlar leather aprons, electrodes & MIG wire." },
-    { slug: "safety-ppe", name: "Safety Gear & PPE", divisionSlug: "industrial", sortOrder: 6, description: "Safety helmets, goggles, work gloves, steel-toe shoes, coveralls, harnesses & hazard tapes." },
-    { slug: "lubricants-adhesives-abrasives", name: "Lubricants, Adhesives & Abrasives", divisionSlug: "industrial", sortOrder: 7, description: "Industrial greases, rust sprays, Loctite threadlockers, epoxy, grinding wheels & flap discs." },
-    { slug: "electrical-pneumatic-mro", name: "Electrical & Pneumatic MRO", divisionSlug: "industrial", sortOrder: 8, description: "Industrial copper cables, MCBs, contactors, cable lugs/ties, FRL air units & LED floodlights." },
+    { slug: "valves-pipes-flow", name: "Valves, Pipes & Flow Control", divisionSlug: "industrial", sortOrder: 3, description: "Ball, gate & butterfly valves, hydraulic pumps, hoses, flanges & clamps." },
+    { slug: "pneumatic-cylinders", name: "Pneumatic Cylinders & Actuators", divisionSlug: "industrial", sortOrder: 4, description: "ISO 15552 profile cylinders (DSBC, DNC), ISO 21287 compact cylinders (ADN, AEN), ISO 6432 round cylinders (DSNU), guided drives (DFM), and rodless linear actuators (DGC) across India." },
+    { slug: "tools-cutting-machining", name: "Hand, Power & Cutting Tools", divisionSlug: "industrial", sortOrder: 5, description: "Angle grinders, drills, spanners, torque wrenches, MIL-spec crimp tools, HSS drill bits, end mills & carbide inserts." },
+    { slug: "welding-fabrication", name: "Welding & Fabrication", divisionSlug: "industrial", sortOrder: 6, description: "Welding machines, auto-darkening helmets, Kevlar leather aprons, electrodes & MIG wire." },
+    { slug: "safety-ppe", name: "Safety Gear & PPE", divisionSlug: "industrial", sortOrder: 7, description: "Safety helmets, goggles, work gloves, steel-toe shoes, coveralls, harnesses & hazard tapes." },
+    { slug: "lubricants-adhesives-abrasives", name: "Lubricants, Adhesives & Abrasives", divisionSlug: "industrial", sortOrder: 8, description: "Industrial greases, rust sprays, Loctite threadlockers, epoxy, grinding wheels & flap discs." },
+    { slug: "electrical-pneumatic-mro", name: "Electrical & Pneumatic MRO", divisionSlug: "industrial", sortOrder: 9, description: "Industrial copper cables, MCBs, contactors, cable lugs/ties, FRL air units & LED floodlights." },
 
     // Agricultural Supply (4 categories)
     { slug: "irrigation-pumps", name: "Irrigation & Water Pumps", divisionSlug: "agricultural", sortOrder: 9, description: "Drip lateral kits, rain guns, disc filters, HDPE/PVC pipes, monoblock & borewell pumps." },

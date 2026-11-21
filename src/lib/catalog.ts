@@ -1,5 +1,5 @@
 import { db, ensureDbReady, divisions, categories, brands, products, documents } from "@/db";
-import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 
 let cachedFtsAvailable: boolean | null = null;
 
@@ -269,8 +269,11 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
     baseConditions.push(eq(products.isFeatured, true));
   }
 
-  const runSelect = (extraConds: typeof baseConditions) =>
-    db
+  const trimmedQ = filters.q?.trim();
+  const qLower = trimmedQ ? trimmedQ.toLowerCase().replace(/\s+/g, " ") : "";
+
+  const runSelect = (extraConds: typeof baseConditions) => {
+    const baseQuery = db
       .select({
         product: products,
         division: divisions,
@@ -281,12 +284,25 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
       .leftJoin(divisions, eq(products.divisionId, divisions.id))
       .leftJoin(categories, eq(products.categoryId, categories.id))
       .leftJoin(brands, eq(products.brandId, brands.id))
-      .where(and(...baseConditions, ...extraConds))
+      .where(and(...baseConditions, ...extraConds));
+
+    if (qLower) {
+      return baseQuery
+        .orderBy(
+          sql`CASE WHEN lower(${products.sku}) = ${qLower} OR lower(${products.sku}) LIKE ${`%-${qLower}`} OR lower(${products.sku}) LIKE ${`%-${qLower}*`} THEN 0 WHEN lower(${products.sku}) LIKE ${`%${qLower}%`} THEN 1 WHEN lower(${products.name}) LIKE ${`%${qLower}%`} THEN 2 ELSE 3 END`,
+          desc(products.isFeatured),
+          asc(products.name)
+        )
+        .limit(filters.limit ?? 100)
+        .offset(filters.offset ?? 0);
+    }
+
+    return baseQuery
       .orderBy(desc(products.isFeatured), asc(products.name))
       .limit(filters.limit ?? 100)
       .offset(filters.offset ?? 0);
+  };
 
-  const trimmedQ = filters.q?.trim();
   if (trimmedQ) {
     const ftsExpr = buildFtsMatchExpr(trimmedQ);
     if (ftsExpr && (await hasProductsFts())) {
@@ -310,6 +326,108 @@ export async function queryProducts(filters: ProductFilterParams = {}) {
   }
 
   return runSelect([]);
+}
+
+export async function getProductsBySlugs(slugs: string[]) {
+  if (!slugs.length) return [];
+  await ensureDbReady();
+  const rows = await db
+    .select({
+      product: products,
+      division: divisions,
+      category: categories,
+      brand: brands,
+    })
+    .from(products)
+    .leftJoin(divisions, eq(products.divisionId, divisions.id))
+    .leftJoin(categories, eq(products.categoryId, categories.id))
+    .leftJoin(brands, eq(products.brandId, brands.id))
+    .where(and(inArray(products.slug, slugs), eq(products.isActive, true)));
+
+  const bySlug = new Map(rows.map((r) => [r.product.slug, r]));
+  return slugs.map((s) => bySlug.get(s)).filter((r): r is NonNullable<typeof r> => Boolean(r));
+}
+
+export async function getCompatibleAndRelatedProducts(params: {
+  productId: number;
+  brandId: number | null;
+  categoryId: number;
+  referencedCodes: string[];
+  limit?: number;
+}) {
+  await ensureDbReady();
+  const maxItems = params.limit ?? 8;
+  const collected: Array<{
+    product: typeof products.$inferSelect;
+    brand: typeof brands.$inferSelect | null;
+    matchReason: "compatible" | "related";
+  }> = [];
+  const seenIds = new Set<number>([params.productId]);
+
+  if (params.referencedCodes.length > 0) {
+    const codeConds = params.referencedCodes.slice(0, 10).map((code) => {
+      const upper = code.toUpperCase();
+      return or(
+        sql`upper(${products.sku}) = ${upper}`,
+        sql`upper(${products.sku}) LIKE ${`%-${upper}`}`,
+        sql`upper(${products.sku}) LIKE ${`%-${upper}%`}`
+      );
+    });
+
+    const compatRows = await db
+      .select({
+        product: products,
+        brand: brands,
+      })
+      .from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id))
+      .where(
+        and(
+          eq(products.isActive, true),
+          ne(products.id, params.productId),
+          ...(params.brandId ? [eq(products.brandId, params.brandId)] : []),
+          or(...codeConds)
+        )
+      )
+      .orderBy(asc(sql`length(${products.sku})`), asc(products.name))
+      .limit(maxItems);
+
+    for (const r of compatRows) {
+      if (!seenIds.has(r.product.id) && collected.length < maxItems) {
+        seenIds.add(r.product.id);
+        collected.push({ ...r, matchReason: "compatible" });
+      }
+    }
+  }
+
+  if (collected.length < maxItems) {
+    const fillRows = await db
+      .select({
+        product: products,
+        brand: brands,
+      })
+      .from(products)
+      .leftJoin(brands, eq(products.brandId, brands.id))
+      .where(
+        and(
+          eq(products.isActive, true),
+          ne(products.id, params.productId),
+          eq(products.categoryId, params.categoryId),
+          ...(params.brandId ? [eq(products.brandId, params.brandId)] : [])
+        )
+      )
+      .orderBy(desc(products.isFeatured), asc(products.name))
+      .limit(maxItems * 2);
+
+    for (const r of fillRows) {
+      if (!seenIds.has(r.product.id) && collected.length < maxItems) {
+        seenIds.add(r.product.id);
+        collected.push({ ...r, matchReason: "related" });
+      }
+    }
+  }
+
+  return collected;
 }
 
 export async function getProductBySlug(slug: string) {
