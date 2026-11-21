@@ -19,6 +19,7 @@ const steps = [
   ["npx", ["tsx", "scripts/load-lt-brands.ts"]],
   ["npx", ["tsx", "scripts/load-agri-brands.ts"]],
   ["npx", ["tsx", "scripts/load-fasteners-seals-adhesives.ts"]],
+  ["npx", ["tsx", "scripts/import-catalog-bundle.ts"]],
   ["npx", ["tsx", "scripts/clean-db-text-and-leadtime.ts"]],
   ["npx", ["tsx", "scripts/enrich-buyer-seo.ts"]],
   ["npx", ["tsx", "scripts/optimize-db.ts"]],
