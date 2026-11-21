@@ -96,7 +96,7 @@ export function decodeHtmlEntities(input: string): string {
 }
 
 const HTML_TAG_REGEX =
-  /<\/?(?:a|abbr|address|article|aside|b|bdi|bdo|blockquote|body|br|button|caption|center|cite|code|col|colgroup|data|dd|del|details|dfn|div|dl|dt|em|embed|figcaption|figure|font|footer|form|h[1-6]|head|header|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|meta|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|q|rp|rt|ruby|s|samp|script|section|select|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr)\b[^>]*>/gi;
+  /<\/?(?:a|abbr|address|article|aside|b|bdi|bdo|blockquote|body|br|button|caption|center|cite|code|col|colgroup|data|dd|del|details|dfn|div|dl|dt|em|embed|figcaption|figure|font|footer|form|h[1-6]|head|header|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|meta|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|q|rp|rt|ruby|s|samp|script|section|select|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr)\b[^>]*>?/gi;
 
 export function htmlToCleanText(
   raw: string | null | undefined,

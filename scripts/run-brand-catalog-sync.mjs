@@ -11,8 +11,15 @@ const steps = [
   ["npx", ["tsx", "scripts/load-polycab.ts"]],
   ["npx", ["tsx", "scripts/load-havells.ts"]],
   ["npx", ["tsx", "scripts/load-festo.ts"]],
+  ["npx", ["tsx", "scripts/load-kirloskar.ts"]],
+  ["npx", ["tsx", "scripts/load-honeywell-safety.ts"]],
+  ["npx", ["tsx", "scripts/load-ntn.ts"]],
+  ["npx", ["tsx", "scripts/load-lt-brands.ts"]],
+  ["npx", ["tsx", "scripts/load-agri-brands.ts"]],
+  ["npx", ["tsx", "scripts/load-fasteners-seals-adhesives.ts"]],
   ["npx", ["tsx", "scripts/clean-db-text-and-leadtime.ts"]],
   ["npx", ["tsx", "scripts/optimize-db.ts"]],
+  ["npx", ["tsx", "scripts/verify-catalog.ts"]],
 ];
 
 for (const [cmd, args] of steps) {

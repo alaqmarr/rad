@@ -84,6 +84,58 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "dm.henkel-dam.com",
       },
+      {
+        protocol: "https",
+        hostname: "media-eshop.kirloskarpumps.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.honeywellstore.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn11.bigcommerce.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.builder.io",
+      },
+      {
+        protocol: "https",
+        hostname: "www.tubesandvalves.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.jains.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.netafimindia.com",
+      },
+      {
+        protocol: "https",
+        hostname: "unbrako.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.trelleborg.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.shopify.com",
+      },
+      {
+        protocol: "https",
+        hostname: "fevicol.in",
+      },
+      {
+        protocol: "https",
+        hostname: "safetycart.in",
+      },
+      {
+        protocol: "https",
+        hostname: "gurudattaagro.in",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],
