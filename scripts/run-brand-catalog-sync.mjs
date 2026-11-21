@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 
 const steps = [
   ["npx", ["tsx", "scripts/load-brand-logos.ts"]],
+  ["npx", ["tsx", "scripts/load-taparia-toolbuy.ts"]],
+  ["npx", ["tsx", "scripts/load-stanley-tools.ts"]],
   ["npx", ["tsx", "scripts/load-tb-brands.ts"]],
   ["npx", ["tsx", "scripts/load-bostik.ts"]],
   ["npx", ["tsx", "scripts/load-loctite.ts"]],
@@ -18,6 +20,7 @@ const steps = [
   ["npx", ["tsx", "scripts/load-agri-brands.ts"]],
   ["npx", ["tsx", "scripts/load-fasteners-seals-adhesives.ts"]],
   ["npx", ["tsx", "scripts/clean-db-text-and-leadtime.ts"]],
+  ["npx", ["tsx", "scripts/enrich-buyer-seo.ts"]],
   ["npx", ["tsx", "scripts/optimize-db.ts"]],
   ["npx", ["tsx", "scripts/verify-catalog.ts"]],
 ];
