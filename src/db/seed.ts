@@ -331,6 +331,14 @@ async function seed() {
       sortOrder: 31,
       description: "Industrial conveyor metal detectors, handheld security/veterinary/gutka pouch detectors, walk-through door frames, boom barriers, and entrance turnstiles.",
     },
+    {
+      slug: "sterila",
+      name: "Sterila",
+      countryOfOrigin: "India",
+      isFeatured: true,
+      sortOrder: 32,
+      description: "Stainless steel hand tools (SS304 & SS316) engineered for critical cleanroom, pharmaceutical, food-grade, chemical, and non-magnetic applications.",
+    },
   ];
 
   const brandMap: Record<string, number> = {};
