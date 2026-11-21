@@ -164,6 +164,7 @@ export const products = sqliteTable(
     index("idx_products_pricing_active").on(table.pricingMode, table.isActive, table.isFeatured, table.name),
     index("idx_products_updated_at").on(table.updatedAt),
     index("idx_products_hsn_code").on(table.hsnCode),
+    index("idx_products_primary_image_url").on(table.primaryImageUrl),
   ]
 );
 

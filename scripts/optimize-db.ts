@@ -57,6 +57,8 @@ async function main() {
       ON products(sku COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_products_hsn_code
       ON products(hsn_code);
+    CREATE INDEX IF NOT EXISTS idx_products_primary_image_url
+      ON products(primary_image_url);
 
     -- Supporting taxonomy, documents, enquiries, AI logs
     CREATE INDEX IF NOT EXISTS idx_brands_active_sort
