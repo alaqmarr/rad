@@ -52,6 +52,38 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "media.toolbuy.com",
       },
+      {
+        protocol: "https",
+        hostname: "havells.com",
+      },
+      {
+        protocol: "https",
+        hostname: "static.godrejenterprises.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.supreme.co.in",
+      },
+      {
+        protocol: "https",
+        hostname: "www.jindalstainless.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.bostik.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.festo.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cms.polycab.com",
+      },
+      {
+        protocol: "https",
+        hostname: "dm.henkel-dam.com",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],
