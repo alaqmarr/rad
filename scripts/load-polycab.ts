@@ -155,7 +155,7 @@ async function main() {
         priceUnit: /cable|wire/i.test(lower) ? "MTR" : "NOS",
         gstPercent: 18,
         moq: /cable|wire/i.test(lower) ? "100 MTR" : "1 NOS",
-        leadTime: "3–7 Working Days",
+        leadTime: "Confirmed Upon Order",
         hsnCode: /cable|wire/i.test(lower) ? "8544" : "8536",
         specificationsJson: JSON.stringify(specs),
         primaryImageUrl: imgs[0] || null,

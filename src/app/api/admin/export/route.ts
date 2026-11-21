@@ -102,7 +102,7 @@ export async function GET(req: Request) {
           "NOS",
           "18",
           "10 NOS",
-          "2-5 Working Days",
+          "Confirmed Upon Order",
           "84821011",
           "Available to Order",
           "false",

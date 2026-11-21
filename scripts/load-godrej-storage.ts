@@ -159,7 +159,7 @@ async function main() {
         priceUnit: "NOS",
         gstPercent: 18,
         moq: "1 NOS",
-        leadTime: "7–14 Working Days",
+        leadTime: "Confirmed Upon Order",
         hsnCode: /forklift|stacker|truck|pallet/i.test(h1) ? "8427" : "7308",
         specificationsJson: JSON.stringify(specs),
         primaryImageUrl: imgs[0] || null,

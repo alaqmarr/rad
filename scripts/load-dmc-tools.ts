@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { brands, categories, db, divisions, products } from "../src/db";
+import { decodeHtmlEntities as decodeEntities, htmlToCleanText as htmlToPlainText } from "../src/lib/sanitize-text";
 
 interface RawDmcItem {
   sku: string;
@@ -50,35 +51,6 @@ const SKIP_EXACT_SLUGS = new Set([
   "techexchange",
   "lead-scanner",
 ]);
-
-function decodeEntities(str: string): string {
-  return str
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&reg;/gi, "®")
-    .replace(/&trade;/gi, "™")
-    .replace(/&deg;/gi, "°")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-}
-
-function htmlToPlainText(html: string | null | undefined): string {
-  if (!html) return "";
-  const stripped = html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<\/(p|div|li|tr|h[1-6]|br)\s*>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "• ")
-    .replace(/<[^>]+>/g, " ");
-  return decodeEntities(stripped)
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n+/g, "\n")
-    .trim();
-}
 
 function normalizeImageUrl(rawUrl: string | null | undefined): string | null {
   if (!rawUrl) return null;
@@ -442,7 +414,7 @@ async function main() {
           priceUnit: "NOS",
           gstPercent: 18,
           moq: "1 NOS",
-          leadTime: "7–14 Working Days",
+          leadTime: "Confirmed Upon Order",
           hsnCode: "",
           specificationsJson,
           primaryImageUrl: item.imageUrl,
@@ -480,7 +452,7 @@ async function main() {
       priceUnit: "NOS",
       gstPercent: 18,
       moq: "1 NOS",
-      leadTime: "7–14 Working Days",
+      leadTime: "Confirmed Upon Order",
       hsnCode: "",
       specificationsJson,
       primaryImageUrl: item.imageUrl,

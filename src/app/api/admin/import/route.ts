@@ -207,7 +207,7 @@ export async function POST(req: Request) {
           priceUnit: r.priceUnit || "NOS",
           gstPercent: r.gstPercent ? Number(r.gstPercent) || 18 : 18,
           moq: r.moq || "1 NOS",
-          leadTime: r.leadTime || "3–7 Working Days",
+          leadTime: r.leadTime || "Confirmed Upon Order",
           hsnCode: r.hsnCode || "",
           inStockStatus: r.inStockStatus || "Available to Order",
           isFeatured: toBool(r.isFeatured, false),

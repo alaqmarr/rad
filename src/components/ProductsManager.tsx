@@ -102,7 +102,7 @@ export function ProductsManager({
   const [priceUnit, setPriceUnit] = useState("NOS");
   const [gstPercent, setGstPercent] = useState("18");
   const [moq, setMoq] = useState("1 NOS");
-  const [leadTime, setLeadTime] = useState("3–7 Working Days");
+  const [leadTime, setLeadTime] = useState("Confirmed Upon Order");
   const [hsnCode, setHsnCode] = useState("");
   const [inStockStatus, setInStockStatus] = useState("Available to Order");
   const [primaryImageUrl, setPrimaryImageUrl] = useState<string | null>(null);
@@ -140,7 +140,7 @@ export function ProductsManager({
       setPriceUnit(d.priceUnit || "NOS");
       setGstPercent(String(d.gstPercent || 18));
       setMoq(d.moq || "1 NOS");
-      setLeadTime(d.leadTime || "3–7 Working Days");
+      setLeadTime(d.leadTime || "Confirmed Upon Order");
       setSpecs(d.specifications?.length ? d.specifications : [{ label: "", value: "" }]);
 
       sileo.success({
@@ -171,7 +171,7 @@ export function ProductsManager({
     setPriceUnit("NOS");
     setGstPercent("18");
     setMoq("1 NOS");
-    setLeadTime("3–7 Working Days");
+    setLeadTime("Confirmed Upon Order");
     setHsnCode("");
     setInStockStatus("Available to Order");
     setPrimaryImageUrl(null);

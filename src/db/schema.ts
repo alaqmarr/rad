@@ -139,7 +139,7 @@ export const products = sqliteTable(
     priceUnit: text("price_unit").notNull().default("NOS"),
     gstPercent: real("gst_percent").notNull().default(18),
     moq: text("moq").notNull().default("1 NOS"),
-    leadTime: text("lead_time").notNull().default("3–7 Working Days"),
+    leadTime: text("lead_time").notNull().default("Confirmed Upon Order"),
     hsnCode: text("hsn_code").notNull().default(""),
     specificationsJson: text("specifications_json").notNull().default("[]"),
     primaryImageUrl: text("primary_image_url"),

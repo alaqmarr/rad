@@ -1,38 +1,20 @@
 import { eq, like, or } from "drizzle-orm";
 import { brands, categories, db, products } from "../src/db";
+import { decodeHtmlEntities, htmlToCleanText } from "../src/lib/sanitize-text";
 
 const BASE_URL = "https://www.toolbuy.com";
 
 function decodeEntities(str: string): string {
-  return str
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&reg;/gi, "®")
-    .replace(/&trade;/gi, "™")
-    .replace(/&deg;/gi, "°")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;|&#x27;/gi, "'")
-    .replace(/&#x26;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return decodeHtmlEntities(str);
 }
 
 function htmlToPlainText(html: string | null | undefined): string {
   if (!html) return "";
-  const stripped = html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<\/(p|div|li|tr|h[1-6]|br)\s*>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "• ")
-    .replace(/<[^>]+>/g, " ");
-  return decodeEntities(stripped)
-    .replace(/Please Note\s+that Product may differ[\s\S]*?without notice\.?/gi, "")
+  return htmlToCleanText(html, false)
+    .replace(/Please Note\s+that Product may differ[\s\S]*?(?:without notice\.?|purchase decision\.?)/gi, "")
     .replace(/\btool\s*buy\b/gi, "Radiant Industrial Co.")
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -603,7 +585,7 @@ async function main() {
       priceUnit: "NOS",
       gstPercent: 18,
       moq: `${item.minQty} NOS`,
-      leadTime: "3–7 Working Days",
+      leadTime: "Confirmed Upon Order",
       hsnCode: item.hsnCode,
       specificationsJson: JSON.stringify(specs.slice(0, 14)),
       primaryImageUrl: item.imageUrl,

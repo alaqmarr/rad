@@ -161,7 +161,7 @@ export default async function AboutPage() {
               label="Our Mission Body"
               value={
                 blocks["mission_body"]?.content ||
-                "Every quotation carries explicit brand make, technical specs, lead time (typically 2–14 working days), and standard 7-day rate validity. Orders are processed swiftly upon formal Purchase Order receipt."
+                "Every quotation carries explicit brand make, technical specs, lead time (confirmed upon order), and standard 7-day rate validity. Orders are processed swiftly upon formal Purchase Order receipt."
               }
               as="p"
               multiline

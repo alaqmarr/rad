@@ -157,7 +157,7 @@ export default async function ContactPage() {
                 label="Commercial Terms Summary"
                 value={
                   blocks["commercial_terms"]?.content ||
-                  "1. Quotations valid for 7 days unless stated otherwise. 2. Standard pan-India dispatch within 7–14 working days or item-wise lead time. 3. Applicable GST charged as per HSN classification. 4. Orders processed against valid Purchase Order (PO) or advance PI confirmation."
+                  "1. Quotations valid for 7 days unless stated otherwise. 2. Delivery & dispatch timelines are confirmed upon order. 3. Applicable GST charged as per HSN classification. 4. Orders processed against valid Purchase Order (PO) or advance PI confirmation."
                 }
                 as="p"
                 multiline

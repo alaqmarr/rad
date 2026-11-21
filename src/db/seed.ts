@@ -94,14 +94,14 @@ async function seed() {
     { pageSlug: "about", blockKey: "story_title", label: "Our Story Title", content: "Why Businesses Buy From Us", contentType: "text" },
     { pageSlug: "about", blockKey: "story_body", label: "Our Story Body", content: "Buying fasteners, bearings, valves, safety gear, cables, pumps, racks, farm tools, and custom Special Items usually means calling ten different dealers. We handle everything under one roof with one clean GST invoice.", contentType: "textarea" },
     { pageSlug: "about", blockKey: "mission_title", label: "Our Mission Title", content: "Honest Pricing & Fast Delivery", contentType: "text" },
-    { pageSlug: "about", blockKey: "mission_body", label: "Our Mission Body", content: "Every quote clearly states the brand, model, delivery timeline (usually 2 to 14 working days), and 7-day price validity so there are zero surprises.", contentType: "textarea" },
+    { pageSlug: "about", blockKey: "mission_body", label: "Our Mission Body", content: "Every quote clearly states the brand, model, delivery timeline (confirmed upon order), and 7-day price validity so there are zero surprises.", contentType: "textarea" },
     { pageSlug: "brands", blockKey: "page_title", label: "Brands Directory Title", content: "Brands We Source", contentType: "text" },
     { pageSlug: "brands", blockKey: "page_lead", label: "Brands Directory Intro", content: "We supply genuine products across 30+ Indian and international brands. Unless marked authorized, we source these as an independent wholesale supplier.", contentType: "textarea" },
     { pageSlug: "documents", blockKey: "page_title", label: "Documents Hub Title", content: "Company Documents & Product Brochures", contentType: "text" },
     { pageSlug: "documents", blockKey: "page_lead", label: "Documents Hub Intro", content: "Download our company vendor profile, standard order terms, and product specification sheets.", contentType: "textarea" },
     { pageSlug: "contact", blockKey: "page_title", label: "Contact Headline", content: "Ask for a Price Quote", contentType: "text" },
     { pageSlug: "contact", blockKey: "page_lead", label: "Contact Intro", content: "Message us directly on WhatsApp or send your item list / spreadsheet via Email.", contentType: "textarea" },
-    { pageSlug: "contact", blockKey: "commercial_terms", label: "Standard Commercial Terms Summary", content: "1. Price quotes stay valid for 7 days. 2. Standard delivery takes 7–14 working days (or as listed per item). 3. GST is added as applicable. 4. Orders begin as soon as you send a Purchase Order or advance payment.", contentType: "textarea" },
+    { pageSlug: "contact", blockKey: "commercial_terms", label: "Standard Commercial Terms Summary", content: "1. Price quotes stay valid for 7 days. 2. Delivery & dispatch lead times are confirmed upon order. 3. GST is added as applicable. 4. Orders begin as soon as you send a Purchase Order or advance payment.", contentType: "textarea" },
   ];
 
   for (const b of defaultBlocks) {

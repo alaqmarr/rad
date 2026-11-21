@@ -376,7 +376,7 @@ export default async function HomePage() {
               <div className="font-mono text-xs font-bold text-[#EA6A12] mb-2">STEP 03</div>
               <h3 className="text-lg font-bold text-[#141A21]">Confirm &amp; Receive Delivery</h3>
               <p className="mt-2 text-sm text-stone-600 leading-relaxed">
-                Confirm with your Purchase Order and we ship everything together within 2–14 working days.
+                Confirm with your Purchase Order — dispatch timelines are confirmed upon order and shipped consolidated.
               </p>
             </div>
           </div>

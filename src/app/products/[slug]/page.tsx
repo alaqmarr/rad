@@ -9,6 +9,7 @@ import { buildAbsoluteUrl, buildSeoMetadata, getDetectedSiteOrigin } from "@/lib
 import { InlineProductPriceEditor } from "@/components/InlineEdit";
 import { ProductDetailActions } from "@/components/ProductDetailActions";
 import { ProductPrimaryMedia } from "@/components/ProductPrimaryMedia";
+import { htmlToCleanText } from "@/lib/sanitize-text";
 import type { SpecRow } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,9 @@ export default async function ProductDetailPage({
   if (!data) notFound();
 
   const { product, division, category, brand, documents } = data;
+  const cleanName = htmlToCleanText(product.name, true) || product.name;
+  const cleanShortDesc = htmlToCleanText(product.shortDescription, true);
+  const cleanDescription = htmlToCleanText(product.description, false);
   let specs: SpecRow[] = [];
   let gallery: string[] = [];
   try {
@@ -212,10 +216,10 @@ export default async function ProductDetailPage({
                 <span className="font-mono text-stone-500">SKU: {product.sku}</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-[#141A21] tracking-tight">
-                {product.name}
+                {cleanName}
               </h1>
               <p className="text-sm sm:text-base text-stone-600 leading-relaxed">
-                {product.shortDescription}
+                {cleanShortDesc}
               </p>
             </div>
 
@@ -280,7 +284,7 @@ export default async function ProductDetailPage({
             <div>
               <h2 className="text-lg font-bold text-[#141A21] mb-2">Overview &amp; Application</h2>
               <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-line">
-                {product.description}
+                {cleanDescription}
               </p>
             </div>
 

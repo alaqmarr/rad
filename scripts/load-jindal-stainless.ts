@@ -119,7 +119,7 @@ async function main() {
       priceUnit: "KG",
       gstPercent: 18,
       moq: "100 KG",
-      leadTime: "5–14 Working Days",
+      leadTime: "Confirmed Upon Order",
       hsnCode: "7219",
       specificationsJson: JSON.stringify(specs),
       primaryImageUrl: imgs[0] || null,

@@ -143,7 +143,7 @@ async function main() {
         priceUnit: "NOS",
         gstPercent: 18,
         moq: "1 NOS",
-        leadTime: "3–7 Working Days",
+        leadTime: "Confirmed Upon Order",
         hsnCode: "3506",
         specificationsJson: JSON.stringify(specs),
         primaryImageUrl: preferredImg,

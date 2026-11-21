@@ -14,7 +14,7 @@ Headquarters: ${s["contact_address"] || "Sai Vaishnavi Complex, Ranigunj, Secund
 Phone: ${s["contact_phone"] || "+91 8522095253"} | Email: ${s["contact_email"] || "info@radiantindustrial.in"}
 
 1. Quotation Validity: Prices quoted are valid for 7 days from the date of quotation, unless otherwise specified.
-2. Delivery & Lead Time: Standard dispatch within 7–14 working days, or as per item-wise lead time stated in the quotation/PO.
+2. Delivery & Lead Time: Delivery timeline and dispatch schedule are confirmed upon order / Purchase Order receipt.
 3. Freight: Standard freight & transport terms apply up to the agreed delivery location unless explicitly stated otherwise.
 4. Payment Terms: As mutually agreed and confirmed with the Purchase Officer (Advance against PI or approved credit terms).
 5. Order Processing: Orders are processed upon receipt of a valid Purchase Order (PO) or written confirmation.
