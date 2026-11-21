@@ -347,6 +347,14 @@ async function seed() {
       sortOrder: 33,
       description: "Daniels Manufacturing Corporation (DMC) aerospace, defense & industrial wiring harness crimping tools, turret heads, positioners, insertion/removal tools, Safe-T-Cable, LaceLok, gages, and EWIS tool kits.",
     },
+    {
+      slug: "gazelle-industrial",
+      name: "Gazelle Industrial",
+      countryOfOrigin: "International",
+      isFeatured: true,
+      sortOrder: 34,
+      description: "Gazelle Industrial high-performance power tools, hand tools, abrasives, ladders & access equipment, material handling gear, measuring/testing instruments, and workplace safety solutions.",
+    },
   ];
 
   const brandMap: Record<string, number> = {};
