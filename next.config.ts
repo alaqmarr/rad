@@ -40,6 +40,14 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "udyogisafety.com",
       },
+      {
+        protocol: "https",
+        hostname: "assets.stanleytools.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.stanleytools.com",
+      },
     ],
   },
   serverExternalPackages: ["@libsql/client", "bcryptjs", "nodemailer"],
