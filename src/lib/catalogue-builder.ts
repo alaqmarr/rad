@@ -33,6 +33,7 @@ export interface CatalogueBuildParams {
 }
 
 const dataUriCache = new Map<string, string | null>();
+const remoteImgCache = new Map<string, string | null>();
 
 function assetToDataUri(publicRelPath: string | null | undefined): string | null {
   if (!publicRelPath) return null;
@@ -65,6 +66,54 @@ function assetToDataUri(publicRelPath: string | null | undefined): string | null
   }
 }
 
+async function resolveImageForPrint(
+  rawUrl: string | null | undefined,
+  origin: string,
+  inlineRemote: boolean
+): Promise<string | null> {
+  if (!rawUrl || !rawUrl.trim()) return null;
+  const abs = buildAbsoluteUrl(origin, rawUrl);
+  if (rawUrl.trim().startsWith("/")) {
+    return assetToDataUri(rawUrl.trim()) || abs;
+  }
+  if (!inlineRemote || !/^https?:\/\//i.test(abs)) {
+    return abs;
+  }
+  if (remoteImgCache.has(abs)) {
+    return remoteImgCache.get(abs) || abs;
+  }
+  try {
+    const res = await fetch(abs, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!res.ok) {
+      remoteImgCache.set(abs, null);
+      return abs;
+    }
+    const ct = (res.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+    if (!ct.startsWith("image/")) {
+      remoteImgCache.set(abs, null);
+      return abs;
+    }
+    const ab = await res.arrayBuffer();
+    if (ab.byteLength === 0 || ab.byteLength > 1_500_000) {
+      remoteImgCache.set(abs, null);
+      return abs;
+    }
+    const dataUri = `data:${ct};base64,${Buffer.from(ab).toString("base64")}`;
+    remoteImgCache.set(abs, dataUri);
+    return dataUri;
+  } catch {
+    remoteImgCache.set(abs, null);
+    return abs;
+  }
+}
+
 function escHtml(v: unknown): string {
   return String(v ?? "")
     .replace(/&/g, "&amp;")
@@ -78,14 +127,33 @@ function safeId(prefix: string, raw: string): string {
   return `${prefix}-${raw.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
 }
 
-function formatReadableDescription(raw: string, fallback: string): string {
-  const cleaned = htmlToCleanText(raw, false)
+function formatReadableDescription(raw: string, fallback: string, cleanName: string): string {
+  let cleaned = htmlToCleanText(raw, false)
+    .replace(/\r\n/g, "\n")
+    // Remove conversational web-widget prompts & trailing FAQs from imported vendor pages
+    .replace(/\n*Before Ordering:[\s\S]*$/i, "")
+    .replace(/\n*Buy 3M[^\n]*\n[\s\S]*?(?=\n*Frequently asked questions|$)/gi, "\n")
+    .replace(/\n*Tell us the model,[^\n]*Get a quote button[\s\S]*?(?=\n\n|$)/gi, "")
+    .replace(/\n*Frequently asked questions[\s\S]*$/i, "")
+    .replace(/\n*Is the price final\?[\s\S]*$/i, "")
+    .replace(/\n*Need training for your team\?[^\n]*/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const base = cleaned || htmlToCleanText(fallback, false).trim();
-  if (!base) return "";
-  // Trim trailing redundant "Before Ordering:" notice if we show structured guidance separately
-  return base.replace(/\n*Before Ordering:[\s\S]*$/i, "").trim();
+
+  if (!cleaned) {
+    cleaned = htmlToCleanText(fallback, false).trim();
+  }
+  if (!cleaned) return "";
+
+  // Strip duplicate title echo if first line repeats cleanName
+  const lines = cleaned.split("\n").map((l) => l.trimEnd());
+  if (
+    lines.length > 1 &&
+    lines[0].trim().toLowerCase() === cleanName.trim().toLowerCase()
+  ) {
+    lines.shift();
+  }
+  return lines.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export async function getCatalogueScopeCount(params: {
@@ -149,14 +217,14 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
   const includeImages = params.includeImages !== false;
   const showPrices = params.showPrices ?? settings["show_public_prices"] === "true";
 
-  const mainLogoData =
-    assetToDataUri("/logos/logo-long-white.png") ||
-    assetToDataUri("/logos/logo-full-white.png") ||
-    buildAbsoluteUrl(origin, "/logos/logo-long-white.png");
-  const darkLogoData =
+  // True transparent PNG logos (no white opaque box background!)
+  const transparentLongLogo =
     assetToDataUri("/logos/logo-long.png") ||
     assetToDataUri("/logos/logo-full.png") ||
     buildAbsoluteUrl(origin, "/logos/logo-long.png");
+  const transparentShortLogo =
+    assetToDataUri("/logos/logo-short.png") ||
+    transparentLongLogo;
 
   const conds = [eq(products.isActive, true)];
   if (params.featuredOnly) conds.push(eq(products.isFeatured, true));
@@ -234,7 +302,27 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     throw new Error(`Product not found: ${params.slug}`);
   }
 
-  // Compatible products lookup (for single datasheet, and for compact sets <= 60 SKUs)
+  // Resolve and inline product images in parallel for catalogues <= 80 items (100% immune to Chrome lazy-print/CORS failures!)
+  const resolvedProductImages = new Map<number, string | null>();
+  if (includeImages && rows.length > 0) {
+    const shouldInlineRemote = rows.length <= 80;
+    const CONCURRENCY = 10;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      const batch = rows.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (r) => {
+          const uri = await resolveImageForPrint(
+            r.product.primaryImageUrl,
+            origin,
+            shouldInlineRemote
+          );
+          resolvedProductImages.set(r.product.id, uri);
+        })
+      );
+    }
+  }
+
+  // Compatible products lookup (for single datasheet and compact sets <= 60 SKUs)
   const compatMap = new Map<
     number,
     Array<{ product: typeof products.$inferSelect; brandName: string | null }>
@@ -336,7 +424,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
         sourcingNote:
           targetBrand.sourcingType === "authorized"
             ? "Authorized Supply Partner"
-            : `Independent B2B Wholesale Supply Partner (${targetBrand.name})`,
+            : `Independent B2B Wholesale Supply (${targetBrand.name})`,
         items,
       });
     }
@@ -416,7 +504,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     const cleanName = htmlToCleanText(p.name, true) || p.name;
     const cleanShort = htmlToCleanText(p.shortDescription, true);
     const mpn = extractManufacturerPartNumber(p.sku, rawSpecs);
-    const fullDesc = formatReadableDescription(p.description, cleanShort);
+    const fullDesc = formatReadableDescription(p.description, cleanShort, cleanName);
     const specs = buildEnrichedSpecifications(
       {
         name: cleanName,
@@ -434,8 +522,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       mpn,
     });
     const compatItems = compatMap.get(p.id) || [];
-    const imgUrl =
-      includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
+    const imgSrc = includeImages ? resolvedProductImages.get(p.id) || null : null;
     const priceText =
       showPrices && p.pricingMode === "priced" && p.basePrice != null
         ? `₹${Number(p.basePrice).toLocaleString("en-IN")} / ${p.priceUnit} (+${p.gstPercent}% GST)`
@@ -459,12 +546,12 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
           </div>
         </div>
 
-        <div class="entry-body ${imgUrl ? "with-media" : "no-media"}">
+        <div class="entry-body ${imgSrc ? "with-media" : "no-media"}">
           ${
-            imgUrl
+            imgSrc
               ? `<div class="entry-media">
                   <div class="entry-img-frame">
-                    <img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" loading="lazy" />
+                    <img src="${escHtml(imgSrc)}" alt="${escHtml(cleanName)}" loading="eager" decoding="sync" referrerpolicy="no-referrer" />
                   </div>
                   <div class="media-actions">
                     <a href="${escHtml(webUrl)}" target="_blank" rel="noopener">Product Page ↗</a>
@@ -477,7 +564,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
           <div class="entry-details">
             <h3 class="entry-title"><a href="${escHtml(webUrl)}" target="_blank" rel="noopener">${escHtml(cleanName)}</a></h3>
-            <div class="entry-cat-line">${escHtml(r.division?.name || "")} ${r.category ? `› ${escHtml(r.category.name)}` : ""}</div>
+            <div class="entry-cat-line">${escHtml(r.division?.name || "")}${r.category ? ` › ${escHtml(r.category.name)}` : ""}</div>
 
             ${fullDesc ? `<div class="entry-desc">${escHtml(fullDesc)}</div>` : ""}
 
@@ -502,7 +589,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
             ${
               compatItems.length > 0
                 ? `<div class="entry-compat">
-                    <span class="sub-label-inline">Compatible Accessories &amp; Related Models:</span>
+                    <span class="sub-label-inline">Compatible Accessories &amp; Companion Models:</span>
                     ${compatItems
                       .map((cp) => {
                         const cpMpn = extractManufacturerPartNumber(
@@ -527,11 +614,11 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
         <div class="entry-foot">
           <div><span>MOQ:</span> <strong>${escHtml(p.moq)}</strong></div>
-          <div><span>Billing Unit:</span> <strong>${escHtml(p.priceUnit)}</strong></div>
-          <div><span>Delivery Lead Time:</span> <strong>${escHtml(p.leadTime)}</strong></div>
-          <div><span>Commercial Terms:</span> <strong>${escHtml(priceText)}</strong></div>
+          <div><span>Unit:</span> <strong>${escHtml(p.priceUnit)}</strong></div>
+          <div><span>Lead Time:</span> <strong>${escHtml(p.leadTime)}</strong></div>
+          <div><span>Pricing:</span> <strong>${escHtml(priceText)}</strong></div>
           ${
-            !imgUrl
+            !imgSrc
               ? `<div class="foot-links">
                   <a href="${escHtml(webUrl)}" target="_blank" rel="noopener">Page ↗</a> •
                   <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener">WhatsApp RFQ ↗</a>
@@ -596,14 +683,14 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       <table class="linesheet">
         <thead>
           <tr>
-            <th>#</th>
-            <th>MPN / SKU</th>
+            <th style="width:32px;">#</th>
+            <th style="width:125px;">MPN / SKU</th>
             <th>Model Description &amp; Verified Specifications</th>
-            <th>Brand</th>
-            <th>HSN</th>
-            <th>MOQ</th>
-            <th>Rate / Unit</th>
-            <th>RFQ</th>
+            <th style="width:95px;">Brand</th>
+            <th style="width:65px;">HSN</th>
+            <th style="width:60px;">MOQ</th>
+            <th style="width:85px;">Rate</th>
+            <th style="width:60px;">RFQ</th>
           </tr>
         </thead>
         <tbody>${trHtml}</tbody>
@@ -611,14 +698,13 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     `;
   };
 
-  // Single Product Full Datasheet
   const renderSingleProductDatasheet = () => {
     const r = rows[0];
     const p = r.product;
     const rawSpecs = parseSpecsJson(p.specificationsJson);
     const cleanName = htmlToCleanText(p.name, true) || p.name;
     const cleanShort = htmlToCleanText(p.shortDescription, true);
-    const fullDesc = formatReadableDescription(p.description, cleanShort);
+    const fullDesc = formatReadableDescription(p.description, cleanShort, cleanName);
     const mpn = extractManufacturerPartNumber(p.sku, rawSpecs);
     const specs = buildEnrichedSpecifications(
       {
@@ -638,8 +724,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       mpn,
     });
     const compatItems = compatMap.get(p.id) || [];
-    const imgUrl =
-      includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
+    const imgSrc = includeImages ? resolvedProductImages.get(p.id) || null : null;
     const brandLogoUri =
       r.brand?.logoUrl
         ? assetToDataUri(r.brand.logoUrl) || buildAbsoluteUrl(origin, r.brand.logoUrl)
@@ -653,7 +738,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     return `
       <section id="${escHtml(safeId("prod", p.slug))}" class="datasheet-wrap">
         <div class="ds-top-strip">
-          <div>
+          <div style="min-width:0;flex:1;">
             <div class="ds-eyebrow">TECHNICAL SPECIFICATION &amp; PROCUREMENT DATASHEET</div>
             <h2 class="ds-h2">${escHtml(cleanName)}</h2>
             <div class="ds-meta-line">
@@ -693,8 +778,8 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
           <div class="ds-right">
             ${
-              imgUrl
-                ? `<div class="ds-photo-box"><img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" /></div>`
+              imgSrc
+                ? `<div class="ds-photo-box"><img src="${escHtml(imgSrc)}" alt="${escHtml(cleanName)}" loading="eager" decoding="sync" referrerpolicy="no-referrer" /></div>`
                 : ""
             }
             <div class="ds-commercial-card">
@@ -756,7 +841,6 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     `;
   };
 
-  // Master Index (Section Directory + Model/Part-Number Quick Index)
   const sectionTocRows =
     params.scope === "product"
       ? `<li><a href="#${escHtml(safeId("prod", rows[0].product.slug))}"><span class="toc-left">01. Technical Specification &amp; Commercial Sheet — ${escHtml(
@@ -870,7 +954,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
             (sec, idx) => `
           <section id="${escHtml(sec.anchorId)}" class="cat-section">
             <div class="section-bar">
-              <div>
+              <div style="min-width:0;flex:1;">
                 <div class="sb-kicker">SECTION ${String(idx + 1).padStart(2, "0")} • ${escHtml(
                   sec.divisionName
                 )}</div>
@@ -889,7 +973,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
                   sec.brandLogoUri
                     ? `<div class="sb-logo"><img src="${escHtml(sec.brandLogoUri)}" alt="${escHtml(
                         sec.title
-                      )}" /></div>`
+                      )}" loading="eager" decoding="sync" /></div>`
                     : ""
                 }
                 <div class="sb-links">
@@ -919,246 +1003,381 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
   <style>
     @page {
       size: A4 portrait;
-      margin: 15mm 12mm 16mm 12mm;
-      @top-left {
-        content: "${escHtml(companyName.toUpperCase())}";
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 7.5pt;
-        font-weight: 700;
-        color: #78716C;
-        letter-spacing: 0.08em;
-      }
-      @top-right {
-        content: "${escHtml(docTitle)}";
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 7.5pt;
-        color: #78716C;
-      }
-      @bottom-left {
-        content: "${escHtml(companyEmail)}  |  ${escHtml(companyPhone)}";
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 7.5pt;
-        color: #78716C;
-      }
-      @bottom-right {
-        content: "Page " counter(page) " of " counter(pages);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 7.5pt;
-        font-weight: 700;
-        color: #141A21;
-      }
+      margin: 10mm 12mm 10mm 12mm;
     }
     @page :first {
       margin: 0;
-      @top-left { content: none; } @top-right { content: none; }
-      @bottom-left { content: none; } @bottom-right { content: none; }
     }
 
     * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    html { scroll-behavior: smooth; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #141A21; background: #ECECE7; }
-    body { margin: 0; padding: 0; font-size: 11.5px; line-height: 1.5; }
+    html { scroll-behavior: smooth; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #141A21; background: #EAEAE4; }
+    body { margin: 0; padding: 0; font-size: 11px; line-height: 1.48; }
     a { color: inherit; text-decoration: none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     .bold { font-weight: 700; }
     .muted { color: #78716C; }
-    .muted-small { font-size: 10px; color: #57534E; margin-top: 2px; }
+    .muted-small { font-size: 9.5px; color: #57534E; margin-top: 2px; }
     .no-wrap { white-space: nowrap; }
 
     /* Non-printing Top Action Bar */
-    .studio-bar { position: sticky; top: 0; z-index: 999; background: #141A21; color: #fff; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 2px solid #EA6A12; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .studio-bar { position: sticky; top: 0; z-index: 999; background: #141A21; color: #fff; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 2px solid #EA6A12; box-shadow: 0 4px 14px rgba(0,0,0,0.16); }
     .studio-bar-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 12px; }
     .studio-bar-nav a { color: #D6D3D1; font-weight: 600; }
     .studio-bar-nav a:hover { color: #FF9E5E; }
-    .studio-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .studio-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .s-status { font-family: monospace; font-size: 11px; color: #FDBA74; }
     .s-btn { padding: 7px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08); color: #fff; }
     .s-btn-primary { background: #EA6A12; border-color: #EA6A12; }
     .s-btn-primary:hover { background: #C24D00; }
 
-    .book-sheet { max-width: 980px; margin: 22px auto; background: #fff; box-shadow: 0 12px 40px rgba(20,26,33,0.10); }
+    /* Master Book Sheet */
+    .book-sheet { width: 100%; max-width: 820px; margin: 22px auto; background: #fff; box-shadow: 0 12px 42px rgba(20,26,33,0.10); overflow-wrap: anywhere; }
 
-    /* 1. ARCHITECTURAL COVER PAGE */
-    .cover-page { display: flex; flex-direction: column; justify-content: space-between; min-height: 296mm; page-break-after: always; break-after: page; background: #fff; }
-    .cover-band { background: #141A21; color: #fff; padding: 38px 46px 34px; display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 5px solid #EA6A12; }
-    .cover-company-logo { height: 50px; width: auto; object-fit: contain; }
-    .cover-oem-plaque { background: #fff; border-radius: 6px; padding: 10px 18px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
-    .cover-oem-plaque img { height: 42px; max-width: 170px; object-fit: contain; display: block; }
+    /* 1. SWISS EDITORIAL COVER PAGE (NO BG LOGO + CLEAN FULL-PAGE ARCHITECTURAL DESIGN) */
+    .cover-page {
+      position: relative;
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      min-height: 296mm;
+      background: #FFFFFF;
+      page-break-after: always;
+      break-after: page;
+    }
+    .cover-spine {
+      background: linear-gradient(180deg, #141A21 0%, #141A21 72%, #EA6A12 72%, #EA6A12 100%);
+      width: 18px;
+      height: 100%;
+    }
+    .cover-inner {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 46px 48px 36px;
+      min-width: 0;
+    }
+    .cover-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      padding-bottom: 24px;
+      border-bottom: 1.5px solid #E4E4E0;
+    }
+    .cover-logo-transparent {
+      height: 54px;
+      width: auto;
+      object-fit: contain;
+      display: block;
+    }
+    .cover-oem-wrap {
+      text-align: right;
+    }
+    .cover-oem-logo {
+      height: 44px;
+      max-width: 150px;
+      object-fit: contain;
+      display: block;
+      margin-left: auto;
+    }
+    .cover-oem-tag {
+      font-family: monospace;
+      font-size: 9px;
+      color: #78716C;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-top: 5px;
+    }
+    .cover-mid {
+      padding: 44px 0;
+    }
+    .cover-eyebrow {
+      font-family: monospace;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #C24D00;
+      margin-bottom: 14px;
+    }
+    .cover-h1 {
+      font-size: 40px;
+      line-height: 1.1;
+      font-weight: 800;
+      color: #141A21;
+      letter-spacing: -0.025em;
+      margin: 0 0 18px;
+    }
+    .cover-rule {
+      width: 84px;
+      height: 4px;
+      background: #EA6A12;
+      margin-bottom: 22px;
+    }
+    .cover-sub {
+      font-size: 14.5px;
+      line-height: 1.65;
+      color: #44403C;
+      max-width: 560px;
+      margin: 0 0 28px;
+    }
+    .cover-prepared {
+      border-left: 3px solid #141A21;
+      background: #F8F8F6;
+      padding: 11px 16px;
+      max-width: 460px;
+      font-size: 12px;
+      color: #44403C;
+      margin-bottom: 24px;
+    }
+    .cover-prepared strong { color: #141A21; }
+    .cover-scope-notes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 30px;
+      padding-top: 22px;
+      border-top: 1px solid #E4E4E0;
+    }
+    .csn-item span {
+      display: block;
+      font-family: monospace;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #78716C;
+      margin-bottom: 3px;
+    }
+    .csn-item strong {
+      font-size: 11.5px;
+      color: #141A21;
+    }
+    .cover-bottom {
+      border-top: 2px solid #141A21;
+      padding-top: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 20px;
+      font-size: 10.5px;
+      color: #44403C;
+    }
+    .cover-bottom strong { color: #141A21; }
 
-    .cover-center { padding: 54px 46px; flex: 1; display: flex; flex-direction: column; justify-content: center; }
-    .cover-edition { font-family: monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: #C24D00; margin-bottom: 14px; }
-    .cover-title { font-size: 38px; line-height: 1.12; font-weight: 800; color: #141A21; letter-spacing: -0.025em; margin: 0 0 16px; max-width: 720px; }
-    .cover-rule { width: 72px; height: 4px; background: #141A21; margin-bottom: 20px; }
-    .cover-desc { font-size: 14.5px; line-height: 1.6; color: #44403C; max-width: 640px; margin: 0 0 26px; }
-    .cover-prepared { border-left: 3px solid #EA6A12; padding: 8px 16px; background: #FBFBFA; font-size: 12.5px; color: #141A21; max-width: 480px; margin-bottom: 26px; }
-    .cover-nav-links { display: flex; flex-wrap: wrap; gap: 10px; }
-    .cover-nav-links a { border: 1px solid #141A21; padding: 8px 16px; font-size: 11.5px; font-weight: 700; border-radius: 3px; color: #141A21; }
-    .cover-nav-links a.primary { background: #141A21; color: #fff; }
-    .cover-nav-links a:hover { border-color: #C24D00; color: #C24D00; }
-    .cover-nav-links a.primary:hover { background: #C24D00; border-color: #C24D00; color: #fff; }
+    /* RUNNING STANDARD PRINT HEADER & FOOTER SHELL */
+    table.print-shell {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    table.print-shell > thead.print-header { display: table-header-group; }
+    table.print-shell > tfoot.print-footer { display: table-footer-group; }
+    .ph-cell {
+      padding: 0 36px 8px;
+      border-bottom: 1.5px solid #141A21;
+      background: #fff;
+    }
+    .ph-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0 6px;
+      font-size: 9.5px;
+      color: #57534E;
+    }
+    .ph-brand { display: flex; align-items: center; gap: 8px; font-weight: 800; color: #141A21; letter-spacing: 0.04em; text-transform: uppercase; }
+    .ph-brand img { height: 18px; width: auto; object-fit: contain; }
+    .pf-cell {
+      padding: 8px 36px 12px;
+      border-top: 1px solid #D6D3D1;
+      background: #fff;
+    }
+    .pf-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 9px;
+      color: #57534E;
+    }
+    .pf-inner strong { color: #141A21; }
+    .body-cell {
+      padding: 18px 36px 24px;
+      vertical-align: top;
+    }
 
-    .cover-footer { background: #F8F8F6; border-top: 1px solid #E4E4E0; padding: 22px 46px; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; font-size: 11px; color: #44403C; }
-    .cover-footer strong { color: #141A21; }
+    /* EDITORIAL PREFACE & MASTER INDEX */
+    .editorial-section {
+      padding: 6px 0 10px;
+      page-break-after: always;
+      break-after: page;
+    }
+    .ed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #141A21;
+      padding-bottom: 8px;
+      margin-bottom: 18px;
+      gap: 12px;
+    }
+    .ed-kicker { font-family: monospace; font-size: 9.5px; font-weight: 700; color: #C24D00; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; }
+    .ed-header h2 { margin: 0; font-size: 20px; font-weight: 800; color: #141A21; }
+    .ed-nav { font-family: monospace; font-size: 10px; color: #57534E; display: flex; gap: 10px; white-space: nowrap; }
+    .ed-nav a:hover { color: #C24D00; text-decoration: underline; }
 
-    /* 2. PREFACE & PROCUREMENT GUIDE */
-    .editorial-page { padding: 38px 44px; page-break-after: always; break-after: page; }
-    .ed-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #141A21; padding-bottom: 10px; margin-bottom: 24px; }
-    .ed-header h2 { margin: 0; font-size: 22px; font-weight: 800; color: #141A21; }
-    .ed-kicker { font-family: monospace; font-size: 10px; font-weight: 700; color: #C24D00; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 3px; }
-    .ed-header-nav { font-family: monospace; font-size: 10.5px; color: #57534E; display: flex; gap: 10px; }
-    .ed-header-nav a:hover { color: #C24D00; text-decoration: underline; }
-
-    .preface-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
-    .pref-block { margin-bottom: 18px; }
-    .pref-block h3 { margin: 0 0 6px; font-size: 13.5px; font-weight: 800; color: #141A21; border-left: 3px solid #EA6A12; padding-left: 9px; }
-    .pref-block p { margin: 0; font-size: 11.5px; color: #44403C; line-height: 1.6; }
-    .pref-list { margin: 6px 0 0 16px; padding: 0; font-size: 11.5px; color: #44403C; }
+    .preface-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .pref-block { margin-bottom: 16px; }
+    .pref-block h3 { margin: 0 0 6px; font-size: 12.5px; font-weight: 800; color: #141A21; border-left: 3px solid #EA6A12; padding-left: 9px; }
+    .pref-block p { margin: 0; font-size: 11px; color: #44403C; line-height: 1.58; }
+    .pref-list { margin: 6px 0 0 16px; padding: 0; font-size: 11px; color: #44403C; }
     .pref-list li { margin-bottom: 5px; }
-    .pref-desk { background: #FBFBFA; border: 1px solid #E4E4E0; border-radius: 4px; padding: 16px; font-size: 11.5px; }
-    .pref-desk h4 { margin: 0 0 8px; font-size: 13px; color: #141A21; }
+    .pref-desk { background: #F8F8F6; border: 1px solid #E4E4E0; border-radius: 4px; padding: 14px; font-size: 11px; }
+    .pref-desk h4 { margin: 0 0 6px; font-size: 12px; color: #141A21; }
 
-    /* 3. STRUCTURED MASTER INDEX */
-    .toc-ul { list-style: none; padding: 0; margin: 0 0 24px; }
-    .toc-ul li a { display: flex; align-items: baseline; gap: 8px; padding: 6px 4px; border-bottom: 1px solid #F0F0EC; font-size: 12px; font-weight: 700; color: #141A21; }
+    .toc-ul { list-style: none; padding: 0; margin: 0 0 22px; }
+    .toc-ul li a { display: flex; align-items: baseline; gap: 8px; padding: 6px 4px; border-bottom: 1px solid #F0F0EC; font-size: 11.5px; font-weight: 700; color: #141A21; }
     .toc-ul li a:hover { color: #C24D00; background: #FFF7ED; }
-    .toc-left { flex-shrink: 0; }
-    .toc-sub { font-weight: 400; font-style: normal; color: #78716C; font-size: 11px; }
-    .toc-dots { flex: 1; border-bottom: 1px dotted #D6D3D1; margin: 0 4px; }
-    .toc-go { font-family: monospace; font-size: 11px; color: #C24D00; white-space: nowrap; }
+    .toc-left { min-width: 0; }
+    .toc-sub { font-weight: 400; font-style: normal; color: #78716C; font-size: 10.5px; }
+    .toc-dots { flex: 1; min-width: 24px; border-bottom: 1px dotted #D6D3D1; margin: 0 4px; }
+    .toc-go { font-family: monospace; font-size: 10.5px; color: #C24D00; white-space: nowrap; }
 
-    .part-index-wrap { border-top: 2px solid #141A21; padding-top: 16px; }
-    .part-index-wrap h3 { margin: 0 0 4px; font-size: 14px; font-weight: 800; }
-    .idx-note { margin: 0 0 12px; font-size: 11px; color: #57534E; }
-    .part-index-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; }
-    .pi-item { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; padding: 3px 0; border-bottom: 1px dashed #E7E5E4; overflow: hidden; }
+    .part-index-wrap { border-top: 1.5px solid #141A21; padding-top: 14px; }
+    .part-index-wrap h3 { margin: 0 0 3px; font-size: 13px; font-weight: 800; }
+    .idx-note { margin: 0 0 10px; font-size: 10.5px; color: #57534E; }
+    .part-index-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+    .pi-item { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 10px; padding: 4px 0; border-bottom: 1px dashed #E7E5E4; overflow: hidden; }
     .pi-item:hover .pi-name { color: #C24D00; text-decoration: underline; }
-    .pi-mpn { font-weight: 700; color: #C24D00; flex-shrink: 0; min-width: 78px; }
-    .pi-name { color: #141A21; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pi-mpn { font-weight: 700; color: #C24D00; flex-shrink: 0; max-width: 44%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pi-name { color: #141A21; min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    /* SECTION BANNERS & PRODUCT ENTRIES */
-    .cat-section, .guide-section { padding: 26px 44px 12px; }
-    .section-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: #141A21; color: #fff; padding: 14px 18px; border-left: 5px solid #EA6A12; margin-bottom: 16px; break-inside: avoid; break-after: avoid; }
-    .sb-kicker { font-family: monospace; font-size: 9.5px; color: #FF9E5E; letter-spacing: 0.1em; font-weight: 700; }
-    .sb-title { margin: 2px 0; font-size: 18px; font-weight: 800; }
-    .sb-sub { font-size: 11px; color: #D6D3D1; }
-    .sb-note { font-family: monospace; font-size: 10px; color: #FED7AA; margin-top: 3px; }
-    .sb-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; shrink: 0; }
-    .sb-logo { background: #fff; border-radius: 4px; padding: 4px 10px; }
-    .sb-logo img { height: 22px; max-width: 110px; object-fit: contain; display: block; }
-    .sb-links { display: flex; gap: 8px; font-family: monospace; font-size: 10px; }
-    .sb-links a { color: #D6D3D1; border: 1px solid rgba(255,255,255,0.22); padding: 2px 7px; border-radius: 3px; }
-    .sb-links a:hover { color: #fff; border-color: #EA6A12; }
+    /* SECTION BANNERS & PRODUCT CARDS */
+    .cat-section, .guide-section { padding: 8px 0 18px; }
+    .section-bar { display: flex; justify-content: space-between; align-items: center; gap: 14px; background: #141A21; color: #fff; padding: 12px 16px; border-left: 5px solid #EA6A12; margin-bottom: 14px; break-inside: avoid; break-after: avoid; }
+    .sb-kicker { font-family: monospace; font-size: 9px; color: #FF9E5E; letter-spacing: 0.1em; font-weight: 700; }
+    .sb-title { margin: 2px 0; font-size: 16.5px; font-weight: 800; }
+    .sb-sub { font-size: 10.5px; color: #D6D3D1; }
+    .sb-note { font-family: monospace; font-size: 9.5px; color: #FED7AA; margin-top: 3px; }
+    .sb-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; }
+    .sb-logo { background: #fff; border-radius: 3px; padding: 4px 8px; }
+    .sb-logo img { height: 20px; max-width: 96px; object-fit: contain; display: block; }
+    .sb-links { display: flex; gap: 6px; font-family: monospace; font-size: 9.5px; }
+    .sb-links a { color: #D6D3D1; border: 1px solid rgba(255,255,255,0.22); padding: 1.5px 6px; border-radius: 2px; }
 
     .entries-stack { display: flex; flex-direction: column; gap: 16px; }
     .entry-card { border: 1px solid #D6D3D1; border-radius: 4px; background: #fff; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
-    .entry-head { background: #F8F8F6; border-bottom: 1px solid #E4E4E0; padding: 7px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-family: monospace; font-size: 10.5px; }
-    .entry-head-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .entry-head { background: #F8F8F6; border-bottom: 1px solid #E4E4E0; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-family: monospace; font-size: 9.5px; }
+    .entry-head-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
     .entry-num { background: #141A21; color: #fff; font-weight: 700; padding: 1px 6px; border-radius: 2px; }
-    .entry-mpn { color: #C24D00; font-weight: 800; }
-    .entry-sku, .entry-hsn { color: #57534E; }
-    .entry-head-right { display: flex; align-items: center; gap: 8px; color: #57534E; font-family: inherit; font-size: 10.5px; font-weight: 600; }
-    .quiet-jump { font-family: monospace; font-size: 10px; color: #C24D00; margin-left: 4px; }
+    .entry-mpn { color: #C24D00; font-weight: 800; word-break: break-all; }
+    .entry-sku, .entry-hsn { color: #57534E; word-break: break-all; }
+    .entry-head-right { display: flex; align-items: center; gap: 6px; color: #57534E; font-family: inherit; font-size: 10px; font-weight: 600; flex-shrink: 0; }
+    .quiet-jump { font-family: monospace; font-size: 9.5px; color: #C24D00; margin-left: 4px; }
 
-    .entry-body { padding: 14px 16px; display: grid; gap: 16px; align-items: start; }
-    .entry-body.with-media { grid-template-columns: 155px 1fr; }
-    .entry-body.no-media { grid-template-columns: 1fr; }
-    .entry-media { display: flex; flex-direction: column; gap: 8px; }
-    .entry-img-frame { width: 155px; height: 140px; border: 1px solid #E4E4E0; background: #fff; border-radius: 4px; padding: 8px; display: flex; align-items: center; justify-content: center; }
-    .entry-img-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .media-actions { display: flex; flex-direction: column; gap: 4px; font-size: 10px; }
+    .entry-body { padding: 14px; display: grid; gap: 16px; align-items: start; }
+    .entry-body.with-media { grid-template-columns: 140px minmax(0, 1fr); }
+    .entry-body.no-media { grid-template-columns: minmax(0, 1fr); }
+    .entry-media { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+    .entry-img-frame { width: 140px; height: 132px; border: 1px solid #E4E4E0; background: #fff; border-radius: 4px; padding: 8px; display: flex; align-items: center; justify-content: center; }
+    .entry-img-frame img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+    .media-actions { display: flex; flex-direction: column; gap: 4px; font-size: 9.5px; }
     .media-actions a { display: block; text-align: center; border: 1px solid #E4E4E0; background: #FBFBFA; padding: 4px 6px; border-radius: 3px; font-weight: 600; color: #141A21; }
     .media-actions a:hover { border-color: #C24D00; color: #C24D00; }
 
-    .entry-title { margin: 0 0 2px; font-size: 14.5px; font-weight: 800; color: #141A21; line-height: 1.25; }
-    .entry-title a:hover { color: #C24D00; text-decoration: underline; }
-    .entry-cat-line { font-size: 10px; color: #78716C; margin-bottom: 8px; }
-    .entry-desc { font-size: 11px; color: #44403C; line-height: 1.55; white-space: pre-line; margin-bottom: 10px; }
+    .entry-details { min-width: 0; }
+    .entry-title { margin: 0 0 2px; font-size: 14px; font-weight: 800; color: #141A21; line-height: 1.25; }
+    .entry-cat-line { font-size: 9.5px; color: #78716C; margin-bottom: 8px; }
+    .entry-desc { font-size: 10.5px; color: #44403C; line-height: 1.52; white-space: pre-line; margin-bottom: 10px; }
 
     .entry-specs-wrap { margin-bottom: 9px; }
-    .sub-label { font-family: monospace; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #57534E; margin-bottom: 4px; }
-    table.entry-specs { width: 100%; border-collapse: collapse; border: 1px solid #E4E4E0; font-size: 10.5px; }
-    table.entry-specs th, table.entry-specs td { padding: 4.5px 9px; border-bottom: 1px solid #E7E5E4; text-align: left; vertical-align: top; }
+    .sub-label { font-family: monospace; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #57534E; margin-bottom: 4px; }
+    table.entry-specs { width: 100%; border-collapse: collapse; border: 1px solid #E4E4E0; font-size: 10px; table-layout: fixed; }
+    table.entry-specs th, table.entry-specs td { padding: 4px 8px; border-bottom: 1px solid #E7E5E4; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
     table.entry-specs th { width: 34%; background: #FBFBFA; color: #57534E; font-weight: 600; }
     table.entry-specs tr:last-child th, table.entry-specs tr:last-child td { border-bottom: none; }
 
-    .entry-compat { margin-bottom: 8px; font-size: 10.5px; }
+    .entry-compat { margin-bottom: 8px; font-size: 10px; }
     .sub-label-inline { font-weight: 700; color: #141A21; margin-right: 6px; }
-    .compat-chip { display: inline-block; font-family: monospace; font-size: 10px; font-weight: 700; border: 1px solid #D6D3D1; background: #FBFBFA; padding: 1px 6px; border-radius: 3px; color: #C24D00; margin: 2px 2px 0 0; }
-    .entry-ordering { font-size: 10.5px; background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 6px 10px; color: #44403C; }
+    .compat-chip { display: inline-block; font-family: monospace; font-size: 9.5px; font-weight: 700; border: 1px solid #D6D3D1; background: #FBFBFA; padding: 1px 6px; border-radius: 3px; color: #C24D00; margin: 2px 2px 0 0; }
+    .entry-ordering { font-size: 10px; background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 6px 9px; color: #44403C; }
 
-    .entry-foot { background: #FBFBFA; border-top: 1px solid #E4E4E0; padding: 7px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; font-size: 10.5px; color: #57534E; }
+    .entry-foot { background: #FBFBFA; border-top: 1px solid #E4E4E0; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; color: #57534E; }
     .entry-foot strong { color: #141A21; }
     .foot-links a { color: #C24D00; font-weight: 700; }
 
     /* Category Guide */
-    .guide-intro { font-size: 12px; color: #44403C; margin: 0 0 14px; }
-    .guide-types-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .gt-card { border: 1px solid #D6D3D1; border-radius: 4px; padding: 11px; background: #FBFBFA; break-inside: avoid; }
-    .gt-head { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; }
-    .gt-head span { font-family: monospace; font-size: 9.5px; background: #141A21; color: #fff; padding: 1px 6px; border-radius: 2px; }
-    .gt-spec { font-family: monospace; font-size: 10.5px; color: #C24D00; font-weight: 700; margin: 4px 0; }
-    .gt-card p { margin: 0 0 6px; font-size: 10.5px; color: #57534E; }
-    .gt-models { font-size: 10px; color: #57534E; }
+    .guide-intro { font-size: 11px; color: #44403C; margin: 0 0 12px; }
+    .guide-types-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .gt-card { border: 1px solid #D6D3D1; border-radius: 4px; padding: 10px; background: #FBFBFA; break-inside: avoid; }
+    .gt-head { display: flex; justify-content: space-between; gap: 6px; font-size: 11.5px; }
+    .gt-head span { font-family: monospace; font-size: 9px; background: #141A21; color: #fff; padding: 1px 5px; border-radius: 2px; white-space: nowrap; }
+    .gt-spec { font-family: monospace; font-size: 10px; color: #C24D00; font-weight: 700; margin: 4px 0; }
+    .gt-card p { margin: 0 0 6px; font-size: 10px; color: #57534E; }
+    .gt-models { font-size: 9.5px; color: #57534E; }
     .gt-models a { font-family: monospace; font-weight: 700; color: #141A21; border: 1px solid #D6D3D1; background: #fff; padding: 1px 5px; border-radius: 2px; margin-left: 3px; }
-    .sub-h3 { margin: 12px 0 8px; font-size: 13px; font-weight: 800; }
+    .sub-h3 { margin: 10px 0 6px; font-size: 12.5px; font-weight: 800; }
 
     /* Line-Sheet Table */
-    table.linesheet { width: 100%; border-collapse: collapse; font-size: 10.5px; border: 1px solid #D6D3D1; }
+    table.linesheet { width: 100%; border-collapse: collapse; font-size: 10px; border: 1px solid #D6D3D1; table-layout: fixed; }
     table.linesheet thead { display: table-header-group; }
-    table.linesheet th { background: #141A21; color: #fff; text-align: left; padding: 7px 8px; font-family: monospace; font-size: 9.5px; text-transform: uppercase; }
-    table.linesheet td { border-bottom: 1px solid #E4E4E0; padding: 6.5px 8px; vertical-align: top; }
+    table.linesheet th { background: #141A21; color: #fff; text-align: left; padding: 6px 7px; font-family: monospace; font-size: 9px; text-transform: uppercase; }
+    table.linesheet td { border-bottom: 1px solid #E4E4E0; padding: 6px 7px; vertical-align: top; overflow-wrap: anywhere; }
     table.linesheet tr { break-inside: avoid; }
     table.linesheet tr:nth-child(even) td { background: #FBFBFA; }
     .row-link { font-weight: 700; color: #141A21; }
     .tbl-cta { font-weight: 700; color: #C24D00; }
 
     /* Single Product Full Datasheet */
-    .datasheet-wrap { padding: 30px 44px; }
-    .ds-top-strip { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 3px solid #141A21; padding-bottom: 12px; margin-bottom: 18px; }
-    .ds-eyebrow { font-family: monospace; font-size: 10px; font-weight: 700; color: #C24D00; letter-spacing: 0.1em; }
-    .ds-h2 { margin: 4px 0 6px; font-size: 22px; font-weight: 800; color: #141A21; }
-    .ds-meta-line { font-size: 11px; color: #57534E; }
-    .ds-brand-logo { height: 34px; max-width: 140px; object-fit: contain; }
-    .ds-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 22px; margin-bottom: 20px; }
-    .ds-lead { font-size: 12.5px; color: #44403C; margin: 0 0 12px; }
-    .ds-hl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
-    .ds-hl-box { border: 1px solid #E4E4E0; background: #FBFBFA; padding: 7px 10px; border-radius: 3px; }
-    .ds-hl-box span { display: block; font-size: 9.5px; color: #78716C; }
-    .ds-hl-box strong { font-size: 11px; font-family: monospace; color: #141A21; }
-    .ds-photo-box { border: 1px solid #D6D3D1; border-radius: 4px; padding: 12px; background: #fff; height: 220px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-    .ds-photo-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .ds-commercial-card { border: 1px solid #D6D3D1; background: #FBFBFA; border-radius: 4px; padding: 12px; }
-    .dcc-row { display: flex; justify-content: space-between; font-size: 11px; padding: 5px 0; border-bottom: 1px solid #E7E5E4; }
+    .datasheet-wrap { padding: 8px 0 18px; }
+    .ds-top-strip { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; border-bottom: 2.5px solid #141A21; padding-bottom: 10px; margin-bottom: 16px; }
+    .ds-eyebrow { font-family: monospace; font-size: 9.5px; font-weight: 700; color: #C24D00; letter-spacing: 0.1em; }
+    .ds-h2 { margin: 4px 0 5px; font-size: 20px; font-weight: 800; color: #141A21; }
+    .ds-meta-line { font-size: 10.5px; color: #57534E; }
+    .ds-brand-logo { height: 32px; max-width: 130px; object-fit: contain; flex-shrink: 0; }
+    .ds-split { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 18px; margin-bottom: 18px; }
+    .ds-lead { font-size: 12px; color: #44403C; margin: 0 0 10px; }
+    .ds-hl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 12px; }
+    .ds-hl-box { border: 1px solid #E4E4E0; background: #FBFBFA; padding: 6px 9px; border-radius: 3px; }
+    .ds-hl-box span { display: block; font-size: 9px; color: #78716C; }
+    .ds-hl-box strong { font-size: 10.5px; font-family: monospace; color: #141A21; }
+    .ds-photo-box { border: 1px solid #D6D3D1; border-radius: 4px; padding: 10px; background: #fff; height: 200px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .ds-photo-box img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+    .ds-commercial-card { border: 1px solid #D6D3D1; background: #FBFBFA; border-radius: 4px; padding: 10px; }
+    .dcc-row { display: flex; justify-content: space-between; font-size: 10.5px; padding: 4.5px 0; border-bottom: 1px solid #E7E5E4; }
     .dcc-row:last-of-type { border-bottom: none; }
-    .dcc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-    .btn-solid { background: #141A21; color: #fff; padding: 6px 11px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
-    .btn-outline { border: 1px solid #141A21; color: #141A21; background: #fff; padding: 5px 10px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
-    .ds-bottom-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 22px; }
-    .ds-section-block h3 { margin: 0 0 8px; font-size: 13px; font-weight: 800; border-bottom: 1px solid #E4E4E0; padding-bottom: 4px; }
-    .guide-ul { margin: 6px 0 0 16px; padding: 0; font-size: 11px; color: #44403C; }
+    .dcc-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .btn-solid { background: #141A21; color: #fff; padding: 5px 10px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+    .btn-outline { border: 1px solid #141A21; color: #141A21; background: #fff; padding: 4px 9px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+    .ds-bottom-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .ds-section-block h3 { margin: 0 0 7px; font-size: 12.5px; font-weight: 800; border-bottom: 1px solid #E4E4E0; padding-bottom: 4px; }
+    .guide-ul { margin: 6px 0 0 16px; padding: 0; font-size: 10.5px; color: #44403C; }
     .guide-ul li { margin-bottom: 5px; }
     .compat-stack { display: flex; flex-direction: column; gap: 5px; }
-    .compat-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; border: 1px solid #E4E4E0; padding: 5px 8px; border-radius: 3px; background: #FBFBFA; }
+    .compat-line { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; border: 1px solid #E4E4E0; padding: 5px 8px; border-radius: 3px; background: #FBFBFA; }
 
-    /* Commercial Terms Back Page */
-    .terms-wrap { margin-top: 28px; background: #141A21; color: #fff; padding: 30px 44px; break-inside: avoid; }
-    .terms-cols { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 26px; margin-top: 14px; font-size: 11px; color: #D6D3D1; }
-    .terms-cols h3 { margin: 0 0 8px; font-size: 12.5px; color: #FF9E5E; }
+    /* Commercial Terms Section */
+    .terms-wrap { margin-top: 24px; background: #141A21; color: #fff; padding: 22px 26px; border-radius: 4px; break-inside: avoid; page-break-inside: avoid; }
+    .terms-cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 22px; margin-top: 12px; font-size: 10.5px; color: #D6D3D1; }
+    .terms-cols h3 { margin: 0 0 6px; font-size: 12px; color: #FF9E5E; }
     .terms-cols ul { margin: 0 0 0 16px; padding: 0; }
-    .terms-cols li { margin-bottom: 5px; }
-    .terms-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.16); display: flex; justify-content: space-between; font-size: 10.5px; color: #A8A29E; }
+    .terms-cols li { margin-bottom: 4px; }
+    .terms-foot { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.16); display: flex; justify-content: space-between; font-size: 10px; color: #A8A29E; }
     .terms-foot a { color: #FF9E5E; font-weight: 700; }
 
     @media print {
-      html, body { background: #fff; }
+      html, body { background: #fff; width: 100%; }
       .studio-bar { display: none !important; }
-      .book-sheet { margin: 0; max-width: none; box-shadow: none; }
+      .book-sheet { margin: 0; max-width: 100%; width: 100%; box-shadow: none; }
       .cover-page { min-height: 296mm; }
-      .editorial-page { padding: 4px 0; }
-      .cat-section, .guide-section, .datasheet-wrap { padding: 6px 0; }
-      .terms-wrap { padding: 24px 28px; }
+      .ph-cell { padding: 0 0 6px; }
+      .pf-cell { padding: 6px 0 0; }
+      .body-cell { padding: 10px 0 14px; }
+      .media-actions { display: none; }
     }
     @media (max-width: 760px) {
-      .preface-cols, .part-index-grid, .entry-body.with-media, .guide-types-grid, .ds-split, .ds-bottom-grid, .terms-cols { grid-template-columns: 1fr; }
-      .cover-band, .cover-center, .cover-footer, .editorial-page, .cat-section { padding-left: 20px; padding-right: 20px; }
+      .cover-page { grid-template-columns: 10px 1fr; }
+      .cover-inner { padding: 28px 22px; }
+      .cover-scope-notes, .preface-cols, .part-index-grid, .entry-body.with-media, .guide-types-grid, .ds-split, .ds-bottom-grid, .terms-cols { grid-template-columns: 1fr; }
+      .ph-cell, .pf-cell, .body-cell { padding-left: 16px; padding-right: 16px; }
     }
   </style>
 </head>
@@ -1172,6 +1391,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       <a href="#terms">Commercial Terms</a>
     </div>
     <div class="studio-bar-actions">
+      <span id="imgStatus" class="s-status">Preparing high-res assets...</span>
       <button type="button" onclick="window.print()" class="s-btn s-btn-primary">Print / Save as PDF</button>
       <a href="${escHtml(
         `/api/admin/catalogue?scope=${encodeURIComponent(params.scope)}${
@@ -1186,183 +1406,245 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
   </div>
 
   <main class="book-sheet">
-    <!-- COVER PAGE -->
+    <!-- ARCHITECTURAL PRINT COVER PAGE (NO BACKGROUND LOGO ON WHITE PAGE) -->
     <header id="cover" class="cover-page">
-      <div class="cover-band">
-        <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" class="cover-company-logo" />
-        ${
-          targetBrandLogoUri
-            ? `<div class="cover-oem-plaque"><img src="${escHtml(targetBrandLogoUri)}" alt="${escHtml(
-                targetBrand?.name || ""
-              )}" /></div>`
-            : ""
-        }
-      </div>
-
-      <div class="cover-center">
-        <div class="cover-edition">OFFICIAL TECHNICAL &amp; PROCUREMENT CATALOGUE • ${editionYear} EDITION</div>
-        <h1 class="cover-title">${escHtml(fullDocTitle)}</h1>
-        <div class="cover-rule"></div>
-        <p class="cover-desc">${escHtml(
-          targetBrand?.description || targetCategory?.description || companyTagline
-        )}</p>
-        ${
-          params.preparedFor
-            ? `<div class="cover-prepared">Prepared Specifically For: <strong>${escHtml(
-                params.preparedFor
-              )}</strong></div>`
-            : ""
-        }
-        <div class="cover-nav-links">
-          <a href="#preface" class="primary">01. Read Preface →</a>
-          <a href="#index">02. Browse Master Index →</a>
-          <a href="#terms">03. Procurement Terms →</a>
+      <div class="cover-spine"></div>
+      <div class="cover-inner">
+        <div class="cover-top">
+          <img src="${escHtml(transparentLongLogo)}" alt="${escHtml(companyName)}" class="cover-logo-transparent" loading="eager" decoding="sync" />
+          ${
+            targetBrandLogoUri
+              ? `<div class="cover-oem-wrap">
+                  <img src="${escHtml(targetBrandLogoUri)}" alt="${escHtml(targetBrand?.name || "")}" class="cover-oem-logo" loading="eager" decoding="sync" />
+                  <div class="cover-oem-tag">${escHtml(targetBrand?.countryOfOrigin || "OEM Supply")} Series</div>
+                </div>`
+              : `<div class="cover-oem-wrap"><div class="cover-oem-tag">Pan-India B2B Procurement Edition</div></div>`
+          }
         </div>
-      </div>
 
-      <div class="cover-footer">
-        <div>
-          <strong>${escHtml(companyName)}</strong><br/>
-          ${escHtml(companyAddress)}
+        <div class="cover-mid">
+          <div class="cover-eyebrow">OFFICIAL TECHNICAL &amp; PROCUREMENT CATALOGUE • ${editionYear} EDITION</div>
+          <h1 class="cover-h1">${escHtml(fullDocTitle)}</h1>
+          <div class="cover-rule"></div>
+          <p class="cover-sub">${escHtml(
+            targetBrand?.description || targetCategory?.description || companyTagline
+          )}</p>
+          ${
+            params.preparedFor
+              ? `<div class="cover-prepared">Prepared For: <strong>${escHtml(params.preparedFor)}</strong></div>`
+              : ""
+          }
+
+          <div class="cover-scope-notes">
+            <div class="csn-item">
+              <span>Supply Coverage</span>
+              <strong>Pan-India B2B GST Dispatch</strong>
+            </div>
+            <div class="csn-item">
+              <span>Lead Time Policy</span>
+              <strong>Confirmed Upon Order</strong>
+            </div>
+            <div class="csn-item">
+              <span>Issued Date</span>
+              <strong>${escHtml(generatedDate)}</strong>
+            </div>
+          </div>
         </div>
-        <div style="text-align:right;">
-          <strong>Phone / WhatsApp:</strong> ${escHtml(companyPhone)}<br/>
-          <strong>Email:</strong> ${escHtml(companyEmail)} &nbsp;|&nbsp; ${escHtml(origin)}
+
+        <div class="cover-bottom">
+          <div>
+            <strong>${escHtml(companyName)}</strong><br/>
+            ${escHtml(companyAddress)}
+          </div>
+          <div style="text-align:right;">
+            <strong>Direct Desk:</strong> ${escHtml(companyPhone)}<br/>
+            <strong>Email:</strong> ${escHtml(companyEmail)} &nbsp;•&nbsp; ${escHtml(origin)}
+          </div>
         </div>
       </div>
     </header>
 
-    <!-- PREFACE & PROCUREMENT HANDBOOK -->
-    <section id="preface" class="editorial-page">
-      <div class="ed-header">
-        <div>
-          <div class="ed-kicker">FOREWORD &amp; SOURCING OVERVIEW</div>
-          <h2>Corporate Preface</h2>
-        </div>
-        <div class="ed-header-nav">
-          <a href="#cover">↑ Cover</a>
-          <a href="#index">Master Index →</a>
-        </div>
-      </div>
+    <!-- INTERIOR PAGES WRAPPED IN NATIVE REPEATING PRINT HEADER / FOOTER TABLE -->
+    <table class="print-shell">
+      <thead class="print-header">
+        <tr>
+          <td class="ph-cell">
+            <div class="ph-inner">
+              <div class="ph-brand">
+                <img src="${escHtml(transparentShortLogo)}" alt="${escHtml(companyName)}" loading="eager" decoding="sync" />
+                <span>${escHtml(companyName)}</span>
+              </div>
+              <div class="mono">${escHtml(docTitle)}</div>
+            </div>
+          </td>
+        </tr>
+      </thead>
 
-      <div class="preface-cols">
-        <div>
-          <div class="pref-block">
-            <h3>1. About ${escHtml(companyName)}</h3>
-            <p>${escHtml(
-              companyName
-            )} is a multi-brand industrial Maintenance, Repair &amp; Operations (MRO), agricultural engineering, and technical specialty supplier headquartered in Ranigunj, Secunderabad, Telangana. We support manufacturing plants, aerospace/defence workshops, OEM assemblies, utilities, and contractors across India with consolidated GST tax invoicing.</p>
-          </div>
+      <tfoot class="print-footer">
+        <tr>
+          <td class="pf-cell">
+            <div class="pf-inner">
+              <div><strong>${escHtml(companyName)}</strong> • ${escHtml(companyAddress)}</div>
+              <div class="mono">${escHtml(companyPhone)} • ${escHtml(companyEmail)}</div>
+            </div>
+          </td>
+        </tr>
+      </tfoot>
 
-          <div class="pref-block">
-            <h3>2. OEM Authenticity &amp; Sourcing Standards</h3>
-            <p>${
-              targetBrand
-                ? targetBrand.sourcingType === "authorized"
-                  ? `Products featured in this edition are supplied as ${targetBrand.name} genuine equipment with manufacturer batch traceability.`
-                  : `All ${targetBrand.name} items in this catalogue are genuine OEM products procured through ${companyName}'s verified B2B wholesale network (${targetBrand.sourcingNote || "independent B2B supply partner"}).`
-                : `Every brand in this catalogue is sourced through verified B2B industrial distribution channels with manufacturer part traceability, HSN tax classification, and optional calibration documentation.`
-            }</p>
-          </div>
-        </div>
+      <tbody>
+        <tr>
+          <td class="body-cell">
+            <!-- PREFACE -->
+            <section id="preface" class="editorial-section">
+              <div class="ed-header">
+                <div>
+                  <div class="ed-kicker">FOREWORD &amp; SOURCING OVERVIEW</div>
+                  <h2>Corporate Preface</h2>
+                </div>
+                <div class="ed-nav">
+                  <a href="#cover">↑ Cover</a>
+                  <a href="#index">Master Index →</a>
+                </div>
+              </div>
 
-        <div>
-          <div class="pref-block">
-            <h3>3. How to Read This Catalogue</h3>
-            <ul class="pref-list">
-              <li><strong>MPN (Manufacturer Part No.):</strong> Original factory code used for technical verification and connector/system fitment.</li>
-              <li><strong>Seller SKU &amp; HSN:</strong> Internal procurement reference and GST tariff code for compliant PO generation.</li>
-              <li><strong>Lead Time:</strong> Confirmed upon order based on live warehouse stock and factory scheduling.</li>
-              <li><strong>Interactive Hyperlinks:</strong> Click any entry in the Master Index to jump straight to that model, or click live product links for direct WhatsApp / Email RFQ submission.</li>
-            </ul>
-          </div>
+              <div class="preface-cols">
+                <div>
+                  <div class="pref-block">
+                    <h3>1. About ${escHtml(companyName)}</h3>
+                    <p>${escHtml(
+                      companyName
+                    )} is a multi-brand industrial Maintenance, Repair &amp; Operations (MRO), agricultural engineering, and technical specialty supplier headquartered in Ranigunj, Secunderabad, Telangana. We serve manufacturing plants, aerospace/defence workshops, OEM assemblies, utilities, and contractors across India with consolidated GST tax invoicing.</p>
+                  </div>
 
-          <div class="pref-desk">
-            <h4>Direct Procurement &amp; Quotation Desk</h4>
-            <p style="margin:0 0 6px;">Share your Bill of Materials (BOM) or MPN list for consolidated B2B GST pricing and scheduled dispatch.</p>
-            <div><strong>WhatsApp / Phone:</strong> ${escHtml(companyPhone)}</div>
-            <div><strong>RFQ Inbox:</strong> ${escHtml(companyEmail)}</div>
-            ${companyGstin ? `<div><strong>GSTIN:</strong> ${escHtml(companyGstin)}</div>` : ""}
-          </div>
-        </div>
-      </div>
-    </section>
+                  <div class="pref-block">
+                    <h3>2. OEM Authenticity &amp; Sourcing Standards</h3>
+                    <p>${
+                      targetBrand
+                        ? targetBrand.sourcingType === "authorized"
+                          ? `Products featured in this edition are supplied as ${targetBrand.name} genuine equipment with manufacturer batch traceability.`
+                          : `All ${targetBrand.name} items in this catalogue are genuine OEM products procured through ${companyName}'s verified B2B wholesale network (${targetBrand.sourcingNote || "independent B2B supply partner"}).`
+                        : `Every brand in this catalogue is sourced through verified B2B industrial distribution channels with manufacturer part traceability, HSN tax classification, and optional calibration documentation.`
+                    }</p>
+                  </div>
+                </div>
 
-    <!-- STRUCTURED MASTER INDEX -->
-    <section id="index" class="editorial-page">
-      <div class="ed-header">
-        <div>
-          <div class="ed-kicker">NAVIGABLE DOCUMENT DIRECTORY</div>
-          <h2>Master Index</h2>
-        </div>
-        <div class="ed-header-nav">
-          <a href="#preface">← Preface</a>
-          <a href="#terms">Commercial Terms →</a>
-        </div>
-      </div>
+                <div>
+                  <div class="pref-block">
+                    <h3>3. How to Read This Catalogue</h3>
+                    <ul class="pref-list">
+                      <li><strong>MPN (Manufacturer Part No.):</strong> Original factory code used for technical verification and connector/system fitment.</li>
+                      <li><strong>Seller SKU &amp; HSN:</strong> Internal procurement reference and GST tariff code for compliant Purchase Order generation.</li>
+                      <li><strong>Lead Time:</strong> Confirmed upon order based on live warehouse allocation and OEM scheduling.</li>
+                      <li><strong>Inter-Page Navigation:</strong> Click any entry in the Master Index to jump straight to that model, or use live links for WhatsApp / Email RFQ submission.</li>
+                    </ul>
+                  </div>
 
-      <ul class="toc-ul">
-        <li><a href="#preface"><span class="toc-left">00. Corporate Preface &amp; Procurement Guidelines</span><span class="toc-dots"></span><span class="toc-go">Preface →</span></a></li>
-        ${
-          params.scope === "category" && categoryGuide
-            ? `<li><a href="#category-guide"><span class="toc-left">Technical Sizing &amp; Type Selection Guide</span><span class="toc-dots"></span><span class="toc-go">Guide →</span></a></li>`
-            : ""
-        }
-        ${sectionTocRows}
-        <li><a href="#terms"><span class="toc-left">Commercial Terms, GST Billing &amp; Contact Desk</span><span class="toc-dots"></span><span class="toc-go">Terms →</span></a></li>
-      </ul>
+                  <div class="pref-desk">
+                    <h4>Direct Procurement &amp; Quotation Desk</h4>
+                    <p style="margin:0 0 6px;">Share your Bill of Materials (BOM) or MPN list for consolidated B2B GST pricing and dispatch scheduling.</p>
+                    <div><strong>WhatsApp / Phone:</strong> ${escHtml(companyPhone)}</div>
+                    <div><strong>RFQ Inbox:</strong> ${escHtml(companyEmail)}</div>
+                    ${companyGstin ? `<div><strong>GSTIN:</strong> ${escHtml(companyGstin)}</div>` : ""}
+                  </div>
+                </div>
+              </div>
+            </section>
 
-      ${partNumberIndexHtml}
-    </section>
+            <!-- MASTER INDEX -->
+            <section id="index" class="editorial-section">
+              <div class="ed-header">
+                <div>
+                  <div class="ed-kicker">NAVIGABLE DOCUMENT DIRECTORY</div>
+                  <h2>Master Index</h2>
+                </div>
+                <div class="ed-nav">
+                  <a href="#preface">← Preface</a>
+                  <a href="#terms">Commercial Terms →</a>
+                </div>
+              </div>
 
-    ${categoryGuideHtml}
+              <ul class="toc-ul">
+                <li><a href="#preface"><span class="toc-left">00. Corporate Preface &amp; Procurement Guidelines</span><span class="toc-dots"></span><span class="toc-go">Preface →</span></a></li>
+                ${
+                  params.scope === "category" && categoryGuide
+                    ? `<li><a href="#category-guide"><span class="toc-left">Technical Sizing &amp; Type Selection Guide</span><span class="toc-dots"></span><span class="toc-go">Guide →</span></a></li>`
+                    : ""
+                }
+                ${sectionTocRows}
+                <li><a href="#terms"><span class="toc-left">Commercial Terms, GST Billing &amp; Contact Desk</span><span class="toc-dots"></span><span class="toc-go">Terms →</span></a></li>
+              </ul>
 
-    <!-- PRODUCT CATALOGUE ENTRIES -->
-    ${sectionsHtml}
+              ${partNumberIndexHtml}
+            </section>
 
-    <!-- COMMERCIAL TERMS BACK COVER -->
-    <footer id="terms" class="terms-wrap">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
-        <div>
-          <div style="font-family:monospace;font-size:10px;color:#FF9E5E;letter-spacing:0.1em;font-weight:700;">ORDERING &amp; DISPATCH TERMS</div>
-          <h2 style="margin:3px 0 0;font-size:18px;color:#fff;">Commercial Terms &amp; Direct RFQ Desk</h2>
-        </div>
-        <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" style="height:32px;" />
-      </div>
+            ${categoryGuideHtml}
 
-      <div class="terms-cols">
-        <div>
-          <h3>Standard Terms of Supply</h3>
-          <ul>
-            <li>Formal quotations remain valid for <strong>7 calendar days</strong> unless stated otherwise in writing.</li>
-            <li><strong>Delivery Lead Time:</strong> Always confirmed upon order confirmation based on inventory or OEM dispatch schedule.</li>
-            <li>Applicable GST is billed separately with full B2B tax invoice credit across India.</li>
-            <li>Please confirm accessories, calibration certificates, mounting brackets, or voltage ratings prior to Purchase Order issuance.</li>
-          </ul>
-        </div>
-        <div>
-          <h3>Ordering &amp; Contact Details</h3>
-          <p style="margin:0 0 8px;"><strong>${escHtml(companyName)}</strong><br/>${escHtml(companyAddress)}</p>
-          <p style="margin:0;">Phone / WhatsApp: <strong>${escHtml(companyPhone)}</strong><br/>Email: <strong>${escHtml(
-            companyEmail
-          )}</strong><br/>Website: <a href="${escHtml(origin)}" target="_blank" style="color:#FF9E5E;text-decoration:underline;">${escHtml(
-            origin
-          )}</a></p>
-        </div>
-      </div>
+            <!-- CATALOGUE SECTIONS & FULL PRODUCT DETAILS -->
+            ${sectionsHtml}
 
-      <div class="terms-foot">
-        <span>Edition ${editionYear} • Issued ${escHtml(generatedDate)} • ${escHtml(companyName)}</span>
-        <span><a href="#cover">↑ Cover</a> &nbsp;|&nbsp; <a href="#preface">↑ Preface</a> &nbsp;|&nbsp; <a href="#index">↑ Master Index</a></span>
-      </div>
-    </footer>
+            <!-- COMMERCIAL TERMS BACK SECTION -->
+            <footer id="terms" class="terms-wrap">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+                <div>
+                  <div style="font-family:monospace;font-size:9.5px;color:#FF9E5E;letter-spacing:0.1em;font-weight:700;">ORDERING &amp; DISPATCH TERMS</div>
+                  <h2 style="margin:3px 0 0;font-size:17px;color:#fff;">Commercial Terms &amp; Direct RFQ Desk</h2>
+                </div>
+              </div>
+
+              <div class="terms-cols">
+                <div>
+                  <h3>Standard Terms of Supply</h3>
+                  <ul>
+                    <li>Formal quotations remain valid for <strong>7 calendar days</strong> unless agreed otherwise in writing.</li>
+                    <li><strong>Delivery Lead Time:</strong> Confirmed upon order confirmation based on warehouse allocation or OEM schedule.</li>
+                    <li>Applicable GST is billed separately with full B2B tax invoice credit across India.</li>
+                    <li>Confirm accessories, calibration certificates, mounting brackets, or voltage ratings prior to Purchase Order issuance.</li>
+                  </ul>
+                </div>
+                <div>
+                  <h3>Ordering &amp; Contact Details</h3>
+                  <p style="margin:0 0 6px;"><strong>${escHtml(companyName)}</strong><br/>${escHtml(companyAddress)}</p>
+                  <p style="margin:0;">Phone / WhatsApp: <strong>${escHtml(companyPhone)}</strong><br/>Email: <strong>${escHtml(
+                    companyEmail
+                  )}</strong><br/>Website: <a href="${escHtml(origin)}" target="_blank" style="color:#FF9E5E;text-decoration:underline;">${escHtml(
+                    origin
+                  )}</a></p>
+                </div>
+              </div>
+
+              <div class="terms-foot">
+                <span>Edition ${editionYear} • Issued ${escHtml(generatedDate)} • ${escHtml(companyName)}</span>
+                <span><a href="#cover">↑ Cover</a> &nbsp;|&nbsp; <a href="#preface">↑ Preface</a> &nbsp;|&nbsp; <a href="#index">↑ Master Index</a></span>
+              </div>
+            </footer>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </main>
 
-  ${
-    params.autoPrint
-      ? `<script>window.addEventListener("load", function(){ setTimeout(function(){ window.print(); }, 350); });</script>`
-      : ""
-  }
+  <script>
+    (function () {
+      var imgs = Array.prototype.slice.call(document.images || []);
+      var statusEl = document.getElementById("imgStatus");
+      function waitImg(img) {
+        if (img.complete) return Promise.resolve();
+        return new Promise(function (resolve) {
+          var t = setTimeout(resolve, 4500);
+          img.addEventListener("load", function () { clearTimeout(t); resolve(); }, { once: true });
+          img.addEventListener("error", function () { clearTimeout(t); resolve(); }, { once: true });
+        });
+      }
+      Promise.all(imgs.map(waitImg)).then(function () {
+        if (statusEl) statusEl.textContent = "Ready (" + imgs.length + " assets loaded)";
+        ${
+          params.autoPrint
+            ? 'setTimeout(function () { window.print(); }, 250);'
+            : ""
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`;
 
