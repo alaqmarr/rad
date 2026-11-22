@@ -423,9 +423,12 @@ async function load3mAndEsab(
     const defaultCat3m = catBySlug["safety-ppe"] || Object.values(catBySlug)[0];
 
     for (const item of [...lionProds, ...pioneerProds]) {
-      const hay = `${item.vendor || ""} ${item.title || ""}`;
-      if (!/\b3m\b/i.test(hay)) continue;
-      const name = htmlToCleanText(item.title, true);
+      const vendor = String(item.vendor || "").trim();
+      const rawTitle = htmlToCleanText(item.title, true);
+      const is3mBrand =
+        /^3m\b/i.test(vendor) || /^(?:3m|scotch(?:-brite|-weld)?)\b/i.test(rawTitle);
+      if (!is3mBrand) continue;
+      const name = rawTitle;
       const skuVal = String(item.variants?.[0]?.sku || item.handle || name).trim();
       const dbSku = `3M-${skuVal.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`.slice(
         0,
@@ -483,7 +486,7 @@ async function load3mAndEsab(
 
     for (const item of safety3mProds) {
       const name = htmlToCleanText(item.name, true);
-      if (!/\b3m\b/i.test(name)) continue;
+      if (!/^(?:3m|scotch(?:-brite|-weld)?)\b/i.test(name)) continue;
       const code = String(item.sku || item.slug || name).trim();
       const dbSku = `3M-${code.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`.slice(
         0,

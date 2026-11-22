@@ -47,8 +47,6 @@ function assetToDataUri(publicRelPath: string | null | undefined): string | null
       return null;
     }
     const buf = fs.readFileSync(absPath);
-    // Skip very large raster/vector assets (> 250 KB) inside massive exports only?
-    // Wait: brand logos are small except 1 or 2 (~400 KB), base64 is still totally fine once per cover/header!
     const ext = path.extname(absPath).toLowerCase();
     const mime =
       ext === ".svg"
@@ -78,6 +76,16 @@ function escHtml(v: unknown): string {
 
 function safeId(prefix: string, raw: string): string {
   return `${prefix}-${raw.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
+}
+
+function formatReadableDescription(raw: string, fallback: string): string {
+  const cleaned = htmlToCleanText(raw, false)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const base = cleaned || htmlToCleanText(fallback, false).trim();
+  if (!base) return "";
+  // Trim trailing redundant "Before Ordering:" notice if we show structured guidance separately
+  return base.replace(/\n*Before Ordering:[\s\S]*$/i, "").trim();
 }
 
 export async function getCatalogueScopeCount(params: {
@@ -139,8 +147,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   const layout: CatalogueLayout = params.layout === "linesheet" ? "linesheet" : "cards";
   const includeImages = params.includeImages !== false;
-  const showPrices =
-    params.showPrices ?? settings["show_public_prices"] === "true";
+  const showPrices = params.showPrices ?? settings["show_public_prices"] === "true";
 
   const mainLogoData =
     assetToDataUri("/logos/logo-long-white.png") ||
@@ -151,7 +158,6 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     assetToDataUri("/logos/logo-full.png") ||
     buildAbsoluteUrl(origin, "/logos/logo-long.png");
 
-  // Resolve target entities
   const conds = [eq(products.isActive, true)];
   if (params.featuredOnly) conds.push(eq(products.isFeatured, true));
 
@@ -183,9 +189,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     conds.push(eq(products.categoryId, c.id));
   } else if (params.scope === "product") {
     if (!params.slug) throw new Error("Product slug is required for individual product datasheet.");
-    conds.push(
-      or(eq(products.slug, params.slug), eq(products.sku, params.slug))!
-    );
+    conds.push(or(eq(products.slug, params.slug), eq(products.sku, params.slug))!);
   }
 
   const [countRow] = await db
@@ -230,34 +234,47 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     throw new Error(`Product not found: ${params.slug}`);
   }
 
-  // Resolve compatible products for individual product datasheet (or small batches <= 80 items)
-  const slugSetInCatalogue = new Set(rows.map((r) => r.product.slug));
-  const singleProductCompat =
-    params.scope === "product" && rows[0]
-      ? await (async () => {
-          const r0 = rows[0];
-          const rawSpecs = parseSpecsJson(r0.product.specificationsJson);
-          const mpn = extractManufacturerPartNumber(r0.product.sku, rawSpecs);
-          const codes = extractReferencedPartCodes(r0.product, mpn);
-          if (codes.length === 0) return [];
-          const codeConds = codes.slice(0, 8).map((c) => {
-            const u = c.toUpperCase();
-            return or(
-              sql`upper(${products.sku}) = ${u}`,
-              sql`upper(${products.sku}) LIKE ${`%-${u}`}`,
-              sql`upper(${products.sku}) LIKE ${`%-${u}*`}`
-            );
-          });
-          return db
-            .select({ product: products, brand: brands })
-            .from(products)
-            .leftJoin(brands, eq(products.brandId, brands.id))
-            .where(and(eq(products.isActive, true), or(...codeConds)))
-            .limit(8);
-        })()
-      : [];
+  // Compatible products lookup (for single datasheet, and for compact sets <= 60 SKUs)
+  const compatMap = new Map<
+    number,
+    Array<{ product: typeof products.$inferSelect; brandName: string | null }>
+  >();
 
-  // Title & scope labels
+  if (rows.length <= 60) {
+    for (const r of rows) {
+      const rawSpecs = parseSpecsJson(r.product.specificationsJson);
+      const mpn = extractManufacturerPartNumber(r.product.sku, rawSpecs);
+      const codes = extractReferencedPartCodes(r.product, mpn);
+      if (codes.length === 0) continue;
+      const codeConds = codes.slice(0, 6).map((c) => {
+        const u = c.toUpperCase();
+        return or(
+          sql`upper(${products.sku}) = ${u}`,
+          sql`upper(${products.sku}) LIKE ${`%-${u}`}`,
+          sql`upper(${products.sku}) LIKE ${`%-${u}*`}`
+        );
+      });
+      const matches = await db
+        .select({ product: products, brandName: brands.name })
+        .from(products)
+        .leftJoin(brands, eq(products.brandId, brands.id))
+        .where(
+          and(
+            eq(products.isActive, true),
+            sql`${products.id} != ${r.product.id}`,
+            ...(r.product.brandId ? [eq(products.brandId, r.product.brandId)] : []),
+            or(...codeConds)
+          )
+        )
+        .limit(6);
+      if (matches.length > 0) {
+        compatMap.set(r.product.id, matches);
+      }
+    }
+  }
+
+  const slugSetInCatalogue = new Set(rows.map((r) => r.product.slug));
+
   const partSuffix =
     totalMatching > safeLimit
       ? ` — Part ${Math.floor(safeOffset / safeLimit) + 1} (${safeOffset + 1}–${Math.min(
@@ -273,16 +290,16 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       ? `${targetCategory.name} Catalogue`
       : params.scope === "product" && rows[0]
       ? `${htmlToCleanText(rows[0].product.name, true) || rows[0].product.name} — Technical Datasheet`
-      : `Master Industrial & Agricultural Supply Catalogue${params.featuredOnly ? " (Featured Index)" : ""}`;
+      : `Master Industrial & Agricultural Supply Catalogue${params.featuredOnly ? " (Featured Edition)" : ""}`;
 
   const fullDocTitle = `${docTitle}${partSuffix}`;
+  const editionYear = new Date().getFullYear();
   const generatedDate = new Date().toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
 
-  // Group rows cleanly for TOC & sectioned pages
   interface SectionGroup {
     anchorId: string;
     title: string;
@@ -296,7 +313,6 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   const sections: SectionGroup[] = [];
   if (params.scope === "brand" && targetBrand) {
-    // Group a Brand catalogue by Category
     const byCat = new Map<string, typeof rows>();
     for (const r of rows) {
       const key = r.category?.slug || "general";
@@ -312,20 +328,19 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       const div = items[0].division;
       sections.push({
         anchorId: safeId("cat", catSlug),
-        title: cat?.name || "Catalog Products",
-        subtitle: cat?.description || `${targetBrand.name} models supplied across India`,
+        title: cat?.name || "Product Portfolio",
+        subtitle: cat?.description || `${targetBrand.name} industrial models`,
         divisionName: div?.name || "Industrial Supply",
         brandLogoUri,
         brandOrigin: targetBrand.countryOfOrigin,
         sourcingNote:
           targetBrand.sourcingType === "authorized"
             ? "Authorized Supply Partner"
-            : `Independent B2B Sourcing Partner (${targetBrand.name})`,
+            : `Independent B2B Wholesale Supply Partner (${targetBrand.name})`,
         items,
       });
     }
   } else if (params.scope === "category" && targetCategory) {
-    // Group a Category catalogue by Brand
     const byBrand = new Map<string, typeof rows>();
     for (const r of rows) {
       const key = r.brand?.slug || "multi-brand";
@@ -341,7 +356,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       sections.push({
         anchorId: safeId("brand", brSlug),
         title: br?.name || "Multi-Brand Sourcing",
-        subtitle: br?.description || `${targetCategory.name} SKUs`,
+        subtitle: br?.description || `${targetCategory.name} models`,
         divisionName: targetDivision?.name || targetCategory.name,
         brandLogoUri,
         brandOrigin: br?.countryOfOrigin,
@@ -349,7 +364,6 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       });
     }
   } else if (params.scope === "master") {
-    // Group Master catalogue cleanly by Category (showing Brand counts + items)
     const byCat = new Map<string, typeof rows>();
     for (const r of rows) {
       const key = r.category?.slug || "general";
@@ -371,23 +385,6 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     }
   }
 
-  // Build unique brand index summary in current export
-  const brandStatsMap = new Map<string, { slug: string; name: string; count: number; logoUri: string | null; anchorId: string }>();
-  for (const r of rows) {
-    if (!r.brand) continue;
-    const cur = brandStatsMap.get(r.brand.slug);
-    if (cur) cur.count += 1;
-    else {
-      brandStatsMap.set(r.brand.slug, {
-        slug: r.brand.slug,
-        name: r.brand.name,
-        count: 1,
-        logoUri: assetToDataUri(r.brand.logoUrl) || (r.brand.logoUrl ? buildAbsoluteUrl(origin, r.brand.logoUrl) : null),
-        anchorId: params.scope === "category" ? safeId("brand", r.brand.slug) : safeId("cat", r.category?.slug || "general"),
-      });
-    }
-  }
-
   const targetBrandLogoUri =
     targetBrand?.logoUrl
       ? assetToDataUri(targetBrand.logoUrl) || buildAbsoluteUrl(origin, targetBrand.logoUrl)
@@ -398,84 +395,149 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       ? getCategoryProcurementGuide(targetCategory.slug)
       : null;
 
-  // Helpers to render WhatsApp / Web links on any item
   const makeProductWebUrl = (slug: string) => buildAbsoluteUrl(origin, `/products/${slug}`);
   const makeWaQuoteUrl = (name: string, sku: string) =>
     `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(
-      `Hello ${companyName}, please share B2B GST quote & lead time for ${name} (SKU: ${sku}).`
+      `Hello ${companyName}, please share B2B GST quotation & delivery schedule for ${name} (SKU: ${sku}).`
     )}`;
   const makeMailQuoteUrl = (name: string, sku: string) =>
     `mailto:${companyEmail}?subject=${encodeURIComponent(
       `RFQ Enquiry: ${name} (${sku})`
     )}&body=${encodeURIComponent(
-      `Hello ${companyName} Team,\n\nPlease send quotation, availability & GST details for:\nProduct: ${name}\nSKU: ${sku}\nQuantity Required: `
+      `Hello ${companyName} Team,\n\nPlease share GST quotation and dispatch schedule for:\nProduct: ${name}\nSKU: ${sku}\nQuantity: `
     )}`;
 
-  const renderProductCard = (r: (typeof rows)[number]) => {
+  let globalItemIdx = 0;
+
+  const renderEditorialProductEntry = (r: (typeof rows)[number]) => {
+    globalItemIdx += 1;
     const p = r.product;
     const rawSpecs = parseSpecsJson(p.specificationsJson);
     const cleanName = htmlToCleanText(p.name, true) || p.name;
     const cleanShort = htmlToCleanText(p.shortDescription, true);
     const mpn = extractManufacturerPartNumber(p.sku, rawSpecs);
+    const fullDesc = formatReadableDescription(p.description, cleanShort);
     const specs = buildEnrichedSpecifications(
       {
         name: cleanName,
         sku: p.sku,
         shortDescription: cleanShort,
-        description: htmlToCleanText(p.description, false),
+        description: fullDesc,
         hsnCode: p.hsnCode,
       },
       rawSpecs,
       mpn
     );
-    const highlights = extractKeySpecHighlights(specs).slice(0, 4);
-    const imgUrl = includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
+    const guidance = getOrderingGuidance({
+      categorySlug: r.category?.slug,
+      brandSlug: r.brand?.slug,
+      mpn,
+    });
+    const compatItems = compatMap.get(p.id) || [];
+    const imgUrl =
+      includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
     const priceText =
       showPrices && p.pricingMode === "priced" && p.basePrice != null
-        ? `₹${Number(p.basePrice).toLocaleString("en-IN")} / ${p.priceUnit}`
-        : "Ask for Price";
+        ? `₹${Number(p.basePrice).toLocaleString("en-IN")} / ${p.priceUnit} (+${p.gstPercent}% GST)`
+        : "Quote Confirmed Upon Enquiry";
     const prodAnchor = safeId("prod", p.slug);
     const webUrl = makeProductWebUrl(p.slug);
 
     return `
-      <article id="${escHtml(prodAnchor)}" class="prod-card">
-        <div class="prod-top">
-          ${
-            imgUrl
-              ? `<div class="prod-thumb"><img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" loading="lazy" /></div>`
-              : ""
-          }
-          <div class="prod-head">
-            <div class="prod-meta-row">
-              <span class="badge-mpn">MPN: ${escHtml(mpn)}</span>
-              <span class="sku-label">SKU: ${escHtml(p.sku)}</span>
-            </div>
-            <h4 class="prod-title"><a href="${escHtml(webUrl)}" target="_blank" rel="noopener">${escHtml(cleanName)}</a></h4>
-            <div class="prod-sub">${escHtml(r.brand?.name || companyName)} • ${escHtml(r.category?.name || "")}</div>
+      <article id="${escHtml(prodAnchor)}" class="entry-card">
+        <div class="entry-head">
+          <div class="entry-head-left">
+            <span class="entry-num">#${String(globalItemIdx).padStart(2, "0")}</span>
+            <span class="entry-mpn">MPN: ${escHtml(mpn)}</span>
+            <span class="entry-sku">SKU: ${escHtml(p.sku)}</span>
+            ${p.hsnCode ? `<span class="entry-hsn">HSN: ${escHtml(p.hsnCode)}</span>` : ""}
+          </div>
+          <div class="entry-head-right">
+            <span>${escHtml(r.brand?.name || companyName)}</span>
+            ${r.brand?.countryOfOrigin ? `<span>• Origin: ${escHtml(r.brand.countryOfOrigin)}</span>` : ""}
+            <a href="#index" class="quiet-jump">↑ Index</a>
           </div>
         </div>
-        ${cleanShort ? `<p class="prod-desc">${escHtml(cleanShort.slice(0, 170))}</p>` : ""}
-        ${
-          highlights.length > 0
-            ? `<div class="spec-pills">${highlights
-                .map(
-                  (h) =>
-                    `<div class="spec-pill"><span>${escHtml(h.label)}:</span> <strong>${escHtml(h.value)}</strong></div>`
-                )
-                .join("")}</div>`
-            : ""
-        }
-        <div class="prod-foot">
-          <div class="prod-comm">
-            <span class="price-tag">${escHtml(priceText)}</span>
-            <span class="comm-sep">• MOQ: ${escHtml(p.moq)}</span>
-            ${p.hsnCode ? `<span class="comm-sep">• HSN: ${escHtml(p.hsnCode)}</span>` : ""}
-            <span class="comm-sep">• ${escHtml(p.leadTime)}</span>
+
+        <div class="entry-body ${imgUrl ? "with-media" : "no-media"}">
+          ${
+            imgUrl
+              ? `<div class="entry-media">
+                  <div class="entry-img-frame">
+                    <img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" loading="lazy" />
+                  </div>
+                  <div class="media-actions">
+                    <a href="${escHtml(webUrl)}" target="_blank" rel="noopener">Product Page ↗</a>
+                    <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener">WhatsApp RFQ ↗</a>
+                    <a href="${escHtml(makeMailQuoteUrl(cleanName, p.sku))}">Email Enquiry ↗</a>
+                  </div>
+                </div>`
+              : ""
+          }
+
+          <div class="entry-details">
+            <h3 class="entry-title"><a href="${escHtml(webUrl)}" target="_blank" rel="noopener">${escHtml(cleanName)}</a></h3>
+            <div class="entry-cat-line">${escHtml(r.division?.name || "")} ${r.category ? `› ${escHtml(r.category.name)}` : ""}</div>
+
+            ${fullDesc ? `<div class="entry-desc">${escHtml(fullDesc)}</div>` : ""}
+
+            ${
+              specs.length > 0
+                ? `<div class="entry-specs-wrap">
+                    <div class="sub-label">Technical Specifications</div>
+                    <table class="entry-specs">
+                      <tbody>
+                        ${specs
+                          .map(
+                            (s) =>
+                              `<tr><th>${escHtml(s.label)}</th><td class="mono">${escHtml(s.value)}</td></tr>`
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>`
+                : ""
+            }
+
+            ${
+              compatItems.length > 0
+                ? `<div class="entry-compat">
+                    <span class="sub-label-inline">Compatible Accessories &amp; Related Models:</span>
+                    ${compatItems
+                      .map((cp) => {
+                        const cpMpn = extractManufacturerPartNumber(
+                          cp.product.sku,
+                          parseSpecsJson(cp.product.specificationsJson)
+                        );
+                        const href = slugSetInCatalogue.has(cp.product.slug)
+                          ? `#${safeId("prod", cp.product.slug)}`
+                          : makeProductWebUrl(cp.product.slug);
+                        return `<a href="${escHtml(href)}" class="compat-chip">${escHtml(cpMpn)}</a>`;
+                      })
+                      .join(" ")}
+                  </div>`
+                : ""
+            }
+
+            <div class="entry-ordering">
+              <strong>Procurement Verification:</strong> ${escHtml(guidance.checklist[0])}
+            </div>
           </div>
-          <div class="prod-links">
-            <a href="${escHtml(webUrl)}" target="_blank" rel="noopener" class="lnk-view">Specs ↗</a>
-            <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener" class="lnk-wa">WhatsApp Quote</a>
-          </div>
+        </div>
+
+        <div class="entry-foot">
+          <div><span>MOQ:</span> <strong>${escHtml(p.moq)}</strong></div>
+          <div><span>Billing Unit:</span> <strong>${escHtml(p.priceUnit)}</strong></div>
+          <div><span>Delivery Lead Time:</span> <strong>${escHtml(p.leadTime)}</strong></div>
+          <div><span>Commercial Terms:</span> <strong>${escHtml(priceText)}</strong></div>
+          ${
+            !imgUrl
+              ? `<div class="foot-links">
+                  <a href="${escHtml(webUrl)}" target="_blank" rel="noopener">Page ↗</a> •
+                  <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener">WhatsApp RFQ ↗</a>
+                </div>`
+              : ""
+          }
         </div>
       </article>
     `;
@@ -484,6 +546,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
   const renderLineSheetTable = (items: typeof rows) => {
     const trHtml = items
       .map((r) => {
+        globalItemIdx += 1;
         const p = r.product;
         const rawSpecs = parseSpecsJson(p.specificationsJson);
         const cleanName = htmlToCleanText(p.name, true) || p.name;
@@ -500,17 +563,18 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
           mpn
         );
         const keySpec = extractKeySpecHighlights(specs)
-          .slice(0, 2)
+          .slice(0, 3)
           .map((s) => `${s.label}: ${s.value}`)
-          .join(" | ");
+          .join(" • ");
         const priceText =
           showPrices && p.pricingMode === "priced" && p.basePrice != null
             ? `₹${Number(p.basePrice).toLocaleString("en-IN")} / ${p.priceUnit}`
-            : "Ask for Price";
+            : "On Request";
         const prodAnchor = safeId("prod", p.slug);
         const webUrl = makeProductWebUrl(p.slug);
         return `
           <tr id="${escHtml(prodAnchor)}">
+            <td class="mono muted">${String(globalItemIdx).padStart(2, "0")}</td>
             <td class="mono bold">${escHtml(mpn)}<div class="muted-small">${escHtml(p.sku)}</div></td>
             <td>
               <a href="${escHtml(webUrl)}" target="_blank" rel="noopener" class="row-link">${escHtml(cleanName)}</a>
@@ -521,7 +585,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
             <td class="mono">${escHtml(p.moq)}</td>
             <td class="mono bold">${escHtml(priceText)}</td>
             <td class="no-wrap">
-              <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener" class="tbl-cta">Quote ↗</a>
+              <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener" class="tbl-cta">Enquire ↗</a>
             </td>
           </tr>
         `;
@@ -532,12 +596,13 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       <table class="linesheet">
         <thead>
           <tr>
+            <th>#</th>
             <th>MPN / SKU</th>
-            <th>Product Description &amp; Key Spec</th>
+            <th>Model Description &amp; Verified Specifications</th>
             <th>Brand</th>
             <th>HSN</th>
             <th>MOQ</th>
-            <th>Price / Unit</th>
+            <th>Rate / Unit</th>
             <th>RFQ</th>
           </tr>
         </thead>
@@ -546,21 +611,21 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     `;
   };
 
-  // Single Product Executive Datasheet Section
-  const renderSingleProductSheet = () => {
+  // Single Product Full Datasheet
+  const renderSingleProductDatasheet = () => {
     const r = rows[0];
     const p = r.product;
     const rawSpecs = parseSpecsJson(p.specificationsJson);
     const cleanName = htmlToCleanText(p.name, true) || p.name;
     const cleanShort = htmlToCleanText(p.shortDescription, true);
-    const cleanDesc = htmlToCleanText(p.description, false);
+    const fullDesc = formatReadableDescription(p.description, cleanShort);
     const mpn = extractManufacturerPartNumber(p.sku, rawSpecs);
     const specs = buildEnrichedSpecifications(
       {
         name: cleanName,
         sku: p.sku,
         shortDescription: cleanShort,
-        description: cleanDesc,
+        description: fullDesc,
         hsnCode: p.hsnCode,
       },
       rawSpecs,
@@ -572,7 +637,9 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       brandSlug: r.brand?.slug,
       mpn,
     });
-    const imgUrl = includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
+    const compatItems = compatMap.get(p.id) || [];
+    const imgUrl =
+      includeImages && p.primaryImageUrl ? buildAbsoluteUrl(origin, p.primaryImageUrl) : null;
     const brandLogoUri =
       r.brand?.logoUrl
         ? assetToDataUri(r.brand.logoUrl) || buildAbsoluteUrl(origin, r.brand.logoUrl)
@@ -580,119 +647,107 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     const priceText =
       showPrices && p.pricingMode === "priced" && p.basePrice != null
         ? `₹${Number(p.basePrice).toLocaleString("en-IN")} / ${p.priceUnit} (+${p.gstPercent}% GST)`
-        : "Ask for Price (Formal GST Quote via WhatsApp / Email)";
+        : "Formal GST Quotation Upon Enquiry";
     const webUrl = makeProductWebUrl(p.slug);
 
     return `
       <section id="${escHtml(safeId("prod", p.slug))}" class="datasheet-wrap">
-        <div class="datasheet-header">
-          <div class="dh-left">
-            <img src="${escHtml(darkLogoData)}" alt="${escHtml(companyName)}" class="dh-logo" />
-            <div class="dh-sub">${escHtml(companyName)} • Technical Product Catalogue Sheet</div>
+        <div class="ds-top-strip">
+          <div>
+            <div class="ds-eyebrow">TECHNICAL SPECIFICATION &amp; PROCUREMENT DATASHEET</div>
+            <h2 class="ds-h2">${escHtml(cleanName)}</h2>
+            <div class="ds-meta-line">
+              <strong>MPN:</strong> <span class="mono">${escHtml(mpn)}</span> &nbsp;|&nbsp;
+              <strong>SKU:</strong> <span class="mono">${escHtml(p.sku)}</span> &nbsp;|&nbsp;
+              <strong>Brand:</strong> ${escHtml(r.brand?.name || companyName)}
+              ${p.hsnCode ? ` &nbsp;|&nbsp; <strong>HSN:</strong> <span class="mono">${escHtml(p.hsnCode)}</span>` : ""}
+            </div>
           </div>
-          <div class="dh-right">
-            ${brandLogoUri ? `<img src="${escHtml(brandLogoUri)}" alt="${escHtml(r.brand?.name || "")}" class="dh-brand-logo" />` : ""}
-            <div class="dh-ref">MPN: <strong>${escHtml(mpn)}</strong> | SKU: ${escHtml(p.sku)}</div>
-          </div>
+          ${brandLogoUri ? `<img src="${escHtml(brandLogoUri)}" alt="${escHtml(r.brand?.name || "")}" class="ds-brand-logo" />` : ""}
         </div>
 
-        <div class="ds-hero">
-          <div class="ds-main">
-            <div class="ds-crumbs">
-              <a href="#toc">Index</a> › ${escHtml(r.division?.name || "Catalog")} › ${escHtml(r.category?.name || "")}
-            </div>
-            <h1 class="ds-title">${escHtml(cleanName)}</h1>
-            ${cleanShort ? `<p class="ds-short">${escHtml(cleanShort)}</p>` : ""}
-
-            <div class="ds-comm-grid">
-              <div><span>Manufacturer / Brand</span><strong>${escHtml(r.brand?.name || companyName)}</strong></div>
-              <div><span>Part No. / MPN</span><strong class="mono">${escHtml(mpn)}</strong></div>
-              <div><span>HSN Code</span><strong class="mono">${escHtml(p.hsnCode || "As Applicable")}</strong></div>
-              <div><span>MOQ &amp; Lead Time</span><strong>${escHtml(p.moq)} • ${escHtml(p.leadTime)}</strong></div>
-            </div>
-
-            <div class="ds-price-box">
-              <div>
-                <div class="ds-price-lbl">Commercial Pricing</div>
-                <div class="ds-price-val">${escHtml(priceText)}</div>
-              </div>
-              <div class="ds-cta-group">
-                <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener" class="btn-wa">WhatsApp Quote ↗</a>
-                <a href="${escHtml(makeMailQuoteUrl(cleanName, p.sku))}" class="btn-mail">Email RFQ ↗</a>
-                <a href="${escHtml(webUrl)}" target="_blank" rel="noopener" class="btn-web">Live Product Page ↗</a>
-              </div>
-            </div>
-          </div>
-          ${
-            imgUrl
-              ? `<div class="ds-img-box"><img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" /></div>`
-              : ""
-          }
-        </div>
-
-        ${
-          highlights.length > 0
-            ? `<div class="ds-highlights">${highlights
-                .map(
-                  (h) =>
-                    `<div class="ds-hl-item"><span>${escHtml(h.label)}</span><strong>${escHtml(h.value)}</strong></div>`
-                )
-                .join("")}</div>`
-            : ""
-        }
-
-        <div class="ds-cols">
-          <div class="ds-col-left">
+        <div class="ds-split">
+          <div class="ds-left">
+            ${cleanShort ? `<p class="ds-lead">${escHtml(cleanShort)}</p>` : ""}
             ${
-              cleanDesc
-                ? `<div class="ds-block"><h3>Overview &amp; Industrial Application</h3><p class="ds-para">${escHtml(
-                    cleanDesc
-                  )}</p></div>`
+              highlights.length > 0
+                ? `<div class="ds-hl-grid">${highlights
+                    .map(
+                      (h) =>
+                        `<div class="ds-hl-box"><span>${escHtml(h.label)}</span><strong>${escHtml(
+                          h.value
+                        )}</strong></div>`
+                    )
+                    .join("")}</div>`
                 : ""
             }
-            <div class="ds-block ordering-box">
-              <h3>${escHtml(guidance.title)}</h3>
-              <ul>${guidance.checklist.map((c) => `<li>${escHtml(c)}</li>`).join("")}</ul>
-            </div>
+            ${
+              fullDesc
+                ? `<div class="ds-section-block">
+                    <h3>Engineering Overview &amp; Application</h3>
+                    <div class="entry-desc">${escHtml(fullDesc)}</div>
+                  </div>`
+                : ""
+            }
           </div>
 
-          <div class="ds-col-right">
-            <div class="ds-block">
-              <h3>Verified Technical Specifications</h3>
-              <table class="spec-table">
-                <tbody>
-                  ${specs
-                    .map(
-                      (s) =>
-                        `<tr><th>${escHtml(s.label)}</th><td class="mono">${escHtml(s.value)}</td></tr>`
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-            </div>
-
+          <div class="ds-right">
             ${
-              singleProductCompat.length > 0
-                ? `<div class="ds-block">
-                    <h3>Compatible Accessories &amp; Companion Models</h3>
-                    <div class="compat-list">
-                      ${singleProductCompat
-                        .map((cp) => {
-                          const cpMpn = extractManufacturerPartNumber(
-                            cp.product.sku,
-                            parseSpecsJson(cp.product.specificationsJson)
-                          );
-                          return `<a href="${escHtml(
-                            makeProductWebUrl(cp.product.slug)
-                          )}" target="_blank" rel="noopener" class="compat-row">
-                            <span class="mono bold">${escHtml(cpMpn)}</span>
-                            <span>${escHtml(htmlToCleanText(cp.product.name, true) || cp.product.name)}</span>
-                            <span class="arrow">↗</span>
-                          </a>`;
-                        })
-                        .join("")}
-                    </div>
-                  </div>`
+              imgUrl
+                ? `<div class="ds-photo-box"><img src="${escHtml(imgUrl)}" alt="${escHtml(cleanName)}" /></div>`
+                : ""
+            }
+            <div class="ds-commercial-card">
+              <div class="dcc-row"><span>Minimum Order Qty</span><strong>${escHtml(p.moq)}</strong></div>
+              <div class="dcc-row"><span>Unit of Measure</span><strong>${escHtml(p.priceUnit)}</strong></div>
+              <div class="dcc-row"><span>Lead Time</span><strong>${escHtml(p.leadTime)}</strong></div>
+              <div class="dcc-row"><span>Commercial Rate</span><strong>${escHtml(priceText)}</strong></div>
+              <div class="dcc-actions">
+                <a href="${escHtml(makeWaQuoteUrl(cleanName, p.sku))}" target="_blank" rel="noopener" class="btn-solid">WhatsApp Quote ↗</a>
+                <a href="${escHtml(makeMailQuoteUrl(cleanName, p.sku))}" class="btn-outline">Email RFQ ↗</a>
+                <a href="${escHtml(webUrl)}" target="_blank" rel="noopener" class="btn-outline">Online Listing ↗</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-bottom-grid">
+          <div class="ds-section-block">
+            <h3>Verified Technical Specifications</h3>
+            <table class="entry-specs">
+              <tbody>
+                ${specs
+                  .map(
+                    (s) => `<tr><th>${escHtml(s.label)}</th><td class="mono">${escHtml(s.value)}</td></tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="ds-section-block">
+            <h3>${escHtml(guidance.title)}</h3>
+            <ul class="guide-ul">${guidance.checklist.map((c) => `<li>${escHtml(c)}</li>`).join("")}</ul>
+            ${
+              compatItems.length > 0
+                ? `<h3 style="margin-top:16px;">Compatible Accessories &amp; Companion Models</h3>
+                   <div class="compat-stack">
+                     ${compatItems
+                       .map((cp) => {
+                         const cpMpn = extractManufacturerPartNumber(
+                           cp.product.sku,
+                           parseSpecsJson(cp.product.specificationsJson)
+                         );
+                         return `<a href="${escHtml(
+                           makeProductWebUrl(cp.product.slug)
+                         )}" target="_blank" rel="noopener" class="compat-line">
+                           <strong class="mono">${escHtml(cpMpn)}</strong>
+                           <span>${escHtml(htmlToCleanText(cp.product.name, true) || cp.product.name)}</span>
+                           <span>↗</span>
+                         </a>`;
+                       })
+                       .join("")}
+                   </div>`
                 : ""
             }
           </div>
@@ -701,53 +756,81 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     `;
   };
 
-  // Assemble Cover, TOC, Sections, Terms
-  const tocLinksHtml =
+  // Master Index (Section Directory + Model/Part-Number Quick Index)
+  const sectionTocRows =
     params.scope === "product"
-      ? `<li><a href="#${escHtml(safeId("prod", rows[0].product.slug))}"><span>01. Product Technical Datasheet — ${escHtml(rows[0].product.sku)}</span><span class="toc-count">Jump →</span></a></li>`
+      ? `<li><a href="#${escHtml(safeId("prod", rows[0].product.slug))}"><span class="toc-left">01. Technical Specification &amp; Commercial Sheet — ${escHtml(
+          rows[0].product.sku
+        )}</span><span class="toc-dots"></span><span class="toc-go">Section 01 →</span></a></li>`
       : sections
           .map(
             (sec, idx) =>
-              `<li><a href="#${escHtml(sec.anchorId)}"><span>${String(idx + 1).padStart(
-                2,
-                "0"
-              )}. ${escHtml(sec.title)} <em class="toc-div">(${escHtml(
+              `<li><a href="#${escHtml(sec.anchorId)}"><span class="toc-left">${String(
+                idx + 1
+              ).padStart(2, "0")}. ${escHtml(sec.title)} <em class="toc-sub">(${escHtml(
                 sec.divisionName
-              )})</em></span><span class="toc-count">${sec.items.length} SKUs →</span></a></li>`
+              )})</em></span><span class="toc-dots"></span><span class="toc-go">${sec.items.length} Models →</span></a></li>`
           )
           .join("");
+
+  const partNumberIndexHtml =
+    rows.length > 1 && rows.length <= 1500
+      ? `<div class="part-index-wrap">
+          <h3>Part Number &amp; Model Directory (Quick Jump Index)</h3>
+          <p class="idx-note">Select any model or MPN below to jump directly to its detailed specification entry.</p>
+          <div class="part-index-grid">
+            ${rows
+              .map((r) => {
+                const specs = parseSpecsJson(r.product.specificationsJson);
+                const mpn = extractManufacturerPartNumber(r.product.sku, specs);
+                const cleanName = htmlToCleanText(r.product.name, true) || r.product.name;
+                return `<a href="#${escHtml(safeId("prod", r.product.slug))}" class="pi-item">
+                  <span class="pi-mpn mono">${escHtml(mpn)}</span>
+                  <span class="pi-name">${escHtml(cleanName)}</span>
+                </a>`;
+              })
+              .join("")}
+          </div>
+        </div>`
+      : "";
 
   const categoryGuideHtml =
     categoryGuide && params.scope === "category"
       ? `
-        <section id="category-guide" class="guide-box">
-          <div class="guide-badge">${escHtml(categoryGuide.badgeLabel)}</div>
-          <h2>${escHtml(categoryGuide.introHeadline)}</h2>
-          <p class="guide-lead">${escHtml(categoryGuide.introSummary)}</p>
+        <section id="category-guide" class="guide-section">
+          <div class="section-bar">
+            <div>
+              <div class="sb-kicker">${escHtml(categoryGuide.badgeLabel)}</div>
+              <h2 class="sb-title">${escHtml(categoryGuide.introHeadline)}</h2>
+            </div>
+            <div class="sb-links"><a href="#preface">↑ Preface</a><a href="#index">↑ Index</a></div>
+          </div>
+          <p class="guide-intro">${escHtml(categoryGuide.introSummary)}</p>
 
           ${
             categoryGuide.types.length > 0
-              ? `<div class="guide-types">${categoryGuide.types
+              ? `<div class="guide-types-grid">${categoryGuide.types
                   .map(
-                    (t) => `
-                  <div class="guide-type-card">
-                    <div class="gtc-top"><strong>${escHtml(t.name)}</strong><span>${escHtml(t.standard)}</span></div>
-                    <div class="gtc-spec">${escHtml(t.specRange)}</div>
-                    <p>${escHtml(t.summary)}</p>
-                    ${
-                      t.modelSlugs.length > 0
-                        ? `<div class="gtc-links">${t.modelSlugs
-                            .map((ms) => {
-                              const href = slugSetInCatalogue.has(ms)
-                                ? `#${safeId("prod", ms)}`
-                                : makeProductWebUrl(ms);
-                              const label = ms.split("-").slice(-2).join("-").toUpperCase();
-                              return `<a href="${escHtml(href)}">${escHtml(label)}</a>`;
-                            })
-                            .join("")}</div>`
-                        : ""
-                    }
-                  </div>`
+                    (t) => `<div class="gt-card">
+                      <div class="gt-head"><strong>${escHtml(t.name)}</strong><span>${escHtml(
+                        t.standard
+                      )}</span></div>
+                      <div class="gt-spec">${escHtml(t.specRange)}</div>
+                      <p>${escHtml(t.summary)}</p>
+                      ${
+                        t.modelSlugs.length > 0
+                          ? `<div class="gt-models">Models: ${t.modelSlugs
+                              .map((ms) => {
+                                const href = slugSetInCatalogue.has(ms)
+                                  ? `#${safeId("prod", ms)}`
+                                  : makeProductWebUrl(ms);
+                                const lbl = ms.split("-").slice(-2).join("-").toUpperCase();
+                                return `<a href="${escHtml(href)}">${escHtml(lbl)}</a>`;
+                              })
+                              .join(" ")}</div>`
+                          : ""
+                      }
+                    </div>`
                   )
                   .join("")}</div>`
               : ""
@@ -755,26 +838,24 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
           ${
             categoryGuide.sizingRows.length > 0
-              ? `<div class="sizing-wrap">
-                  <h3>${escHtml(categoryGuide.sizingTitle)}</h3>
-                  <table class="linesheet">
-                    <thead><tr>${categoryGuide.sizingColumns
-                      .map((c) => `<th>${escHtml(c)}</th>`)
-                      .join("")}</tr></thead>
-                    <tbody>${categoryGuide.sizingRows
-                      .map(
-                        (sr) => `<tr>
-                        <td class="mono bold">${escHtml(sr.series)}</td>
-                        <td>${escHtml(sr.standard)}</td>
-                        <td class="mono">${escHtml(sr.boresOrRange)}</td>
-                        <td class="mono">${escHtml(sr.strokeOrVariant)}</td>
-                        <td>${escHtml(sr.cushioningOrRating)}</td>
-                        <td>${escHtml(sr.portsOrNotes)}</td>
-                      </tr>`
-                      )
-                      .join("")}</tbody>
-                  </table>
-                </div>`
+              ? `<h3 class="sub-h3">${escHtml(categoryGuide.sizingTitle)}</h3>
+                 <table class="linesheet">
+                   <thead><tr>${categoryGuide.sizingColumns
+                     .map((c) => `<th>${escHtml(c)}</th>`)
+                     .join("")}</tr></thead>
+                   <tbody>${categoryGuide.sizingRows
+                     .map(
+                       (sr) => `<tr>
+                         <td class="mono bold">${escHtml(sr.series)}</td>
+                         <td>${escHtml(sr.standard)}</td>
+                         <td class="mono">${escHtml(sr.boresOrRange)}</td>
+                         <td class="mono">${escHtml(sr.strokeOrVariant)}</td>
+                         <td>${escHtml(sr.cushioningOrRating)}</td>
+                         <td>${escHtml(sr.portsOrNotes)}</td>
+                       </tr>`
+                     )
+                     .join("")}</tbody>
+                 </table>`
               : ""
           }
         </section>
@@ -783,38 +864,38 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   const sectionsHtml =
     params.scope === "product"
-      ? renderSingleProductSheet()
+      ? renderSingleProductDatasheet()
       : sections
           .map(
             (sec, idx) => `
           <section id="${escHtml(sec.anchorId)}" class="cat-section">
-            <div class="sec-banner">
-              <div class="sec-left">
-                <div class="sec-kicker">SECTION ${String(idx + 1).padStart(2, "0")} • ${escHtml(
+            <div class="section-bar">
+              <div>
+                <div class="sb-kicker">SECTION ${String(idx + 1).padStart(2, "0")} • ${escHtml(
                   sec.divisionName
                 )}</div>
-                <h2 class="sec-title">${escHtml(sec.title)}</h2>
-                ${sec.subtitle ? `<p class="sec-sub">${escHtml(sec.subtitle)}</p>` : ""}
+                <h2 class="sb-title">${escHtml(sec.title)}</h2>
+                ${sec.subtitle ? `<div class="sb-sub">${escHtml(sec.subtitle)}</div>` : ""}
                 ${
                   sec.sourcingNote
-                    ? `<div class="sec-note">${escHtml(sec.sourcingNote)}${
+                    ? `<div class="sb-note">${escHtml(sec.sourcingNote)}${
                         sec.brandOrigin ? ` • Origin: ${escHtml(sec.brandOrigin)}` : ""
                       }</div>`
                     : ""
                 }
               </div>
-              <div class="sec-right">
+              <div class="sb-right">
                 ${
                   sec.brandLogoUri
-                    ? `<div class="sec-logo-pill"><img src="${escHtml(sec.brandLogoUri)}" alt="${escHtml(
+                    ? `<div class="sb-logo"><img src="${escHtml(sec.brandLogoUri)}" alt="${escHtml(
                         sec.title
                       )}" /></div>`
                     : ""
                 }
-                <div class="sec-nav-pills">
-                  <span class="sec-count">${sec.items.length} Models</span>
-                  <a href="#toc" class="back-toc">↑ Contents</a>
-                  <a href="#terms" class="back-toc">Quote Terms</a>
+                <div class="sb-links">
+                  <a href="#preface">Preface</a>
+                  <a href="#index">Index</a>
+                  <a href="#terms">Terms</a>
                 </div>
               </div>
             </div>
@@ -822,7 +903,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
             ${
               layout === "linesheet"
                 ? renderLineSheetTable(sec.items)
-                : `<div class="prod-grid">${sec.items.map(renderProductCard).join("")}</div>`
+                : `<div class="entries-stack">${sec.items.map(renderEditorialProductEntry).join("")}</div>`
             }
           </section>
         `
@@ -836,214 +917,262 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escHtml(fullDocTitle)} | ${escHtml(companyName)}</title>
   <style>
-    @page { size: A4; margin: 12mm 11mm; }
+    @page {
+      size: A4 portrait;
+      margin: 15mm 12mm 16mm 12mm;
+      @top-left {
+        content: "${escHtml(companyName.toUpperCase())}";
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 7.5pt;
+        font-weight: 700;
+        color: #78716C;
+        letter-spacing: 0.08em;
+      }
+      @top-right {
+        content: "${escHtml(docTitle)}";
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 7.5pt;
+        color: #78716C;
+      }
+      @bottom-left {
+        content: "${escHtml(companyEmail)}  |  ${escHtml(companyPhone)}";
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 7.5pt;
+        color: #78716C;
+      }
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 7.5pt;
+        font-weight: 700;
+        color: #141A21;
+      }
+    }
+    @page :first {
+      margin: 0;
+      @top-left { content: none; } @top-right { content: none; }
+      @bottom-left { content: none; } @bottom-right { content: none; }
+    }
+
     * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    html { scroll-behavior: smooth; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #141A21; background: #F4F4F0; }
-    body { margin: 0; padding: 0; font-size: 12px; line-height: 1.45; }
+    html { scroll-behavior: smooth; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #141A21; background: #ECECE7; }
+    body { margin: 0; padding: 0; font-size: 11.5px; line-height: 1.5; }
     a { color: inherit; text-decoration: none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     .bold { font-weight: 700; }
+    .muted { color: #78716C; }
     .muted-small { font-size: 10px; color: #57534E; margin-top: 2px; }
     .no-wrap { white-space: nowrap; }
 
-    /* Non-printing Top Studio Toolbar */
-    .toolbar { position: sticky; top: 0; z-index: 999; background: #0E1319; color: #fff; padding: 10px 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 2px solid #EA6A12; }
-    .toolbar-left { display: flex; align-items: center; gap: 12px; font-size: 12px; }
-    .toolbar-badge { background: rgba(234,106,18,0.2); border: 1px solid #EA6A12; color: #FF9E5E; padding: 2px 8px; border-radius: 99px; font-family: monospace; font-weight: 700; font-size: 11px; }
-    .toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-    .tb-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 5px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.08); color: #fff; }
-    .tb-btn:hover { background: rgba(255,255,255,0.16); }
-    .tb-primary { background: #EA6A12; border-color: #EA6A12; color: #fff; }
-    .tb-primary:hover { background: #C95609; }
+    /* Non-printing Top Action Bar */
+    .studio-bar { position: sticky; top: 0; z-index: 999; background: #141A21; color: #fff; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 2px solid #EA6A12; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .studio-bar-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 12px; }
+    .studio-bar-nav a { color: #D6D3D1; font-weight: 600; }
+    .studio-bar-nav a:hover { color: #FF9E5E; }
+    .studio-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .s-btn { padding: 7px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08); color: #fff; }
+    .s-btn-primary { background: #EA6A12; border-color: #EA6A12; }
+    .s-btn-primary:hover { background: #C24D00; }
 
-    .container { max-width: 1120px; margin: 18px auto; background: #fff; box-shadow: 0 12px 35px rgba(20,26,33,0.08); border-radius: 6px; overflow: hidden; }
+    .book-sheet { max-width: 980px; margin: 22px auto; background: #fff; box-shadow: 0 12px 40px rgba(20,26,33,0.10); }
 
-    /* Cover Page */
-    .cover { background: linear-gradient(145deg, #0D1218 0%, #141A21 55%, #1E2733 100%); color: #fff; padding: 48px 44px; min-height: 258mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; position: relative; }
-    .cover-accent { height: 6px; width: 96px; background: #EA6A12; border-radius: 3px; margin-bottom: 18px; }
-    .cover-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 24px; }
-    .cover-logo { height: 54px; width: auto; object-fit: contain; }
-    .cover-brand-box { background: #fff; border-radius: 8px; padding: 12px 18px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
-    .cover-brand-logo { height: 48px; max-width: 180px; object-fit: contain; }
-    .cover-mid { margin: 42px 0; }
-    .cover-kicker { font-family: monospace; text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; color: #FF9E5E; font-weight: 700; margin-bottom: 10px; }
-    .cover-h1 { font-size: 36px; line-height: 1.12; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
-    .cover-tagline { font-size: 15px; color: #D6D3D1; max-width: 680px; margin: 0 0 22px; }
-    .prepared-pill { display: inline-block; background: rgba(234,106,18,0.16); border: 1px solid rgba(234,106,18,0.5); border-radius: 6px; padding: 8px 14px; font-size: 12px; color: #FED7AA; margin-bottom: 18px; }
-    .cover-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
-    .cover-stat { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 14px; }
-    .cover-stat span { display: block; font-size: 10px; font-family: monospace; color: #A8A29E; text-transform: uppercase; }
-    .cover-stat strong { display: block; font-size: 18px; margin-top: 4px; color: #fff; }
-    .cover-jump { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
-    .cover-jump a { background: #EA6A12; color: #fff; font-weight: 700; font-size: 12px; padding: 9px 16px; border-radius: 5px; }
-    .cover-jump a.sec { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.22); }
-    .cover-bottom { border-top: 1px solid rgba(255,255,255,0.14); padding-top: 18px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; font-size: 11px; color: #D6D3D1; }
+    /* 1. ARCHITECTURAL COVER PAGE */
+    .cover-page { display: flex; flex-direction: column; justify-content: space-between; min-height: 296mm; page-break-after: always; break-after: page; background: #fff; }
+    .cover-band { background: #141A21; color: #fff; padding: 38px 46px 34px; display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 5px solid #EA6A12; }
+    .cover-company-logo { height: 50px; width: auto; object-fit: contain; }
+    .cover-oem-plaque { background: #fff; border-radius: 6px; padding: 10px 18px; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+    .cover-oem-plaque img { height: 42px; max-width: 170px; object-fit: contain; display: block; }
 
-    /* Table of Contents & Company Overview */
-    .toc-page { padding: 34px 36px; page-break-after: always; break-after: page; }
-    .page-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #141A21; padding-bottom: 12px; margin-bottom: 22px; }
-    .page-head img { height: 30px; width: auto; }
-    .page-head-meta { text-align: right; font-size: 10px; font-family: monospace; color: #57534E; }
-    .toc-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 24px; }
-    .toc-list { list-style: none; padding: 0; margin: 12px 0 0; border: 1px solid #E4E4E0; border-radius: 6px; overflow: hidden; }
-    .toc-list li { border-bottom: 1px solid #E4E4E0; }
-    .toc-list li:last-child { border-bottom: none; }
-    .toc-list a { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 13px; font-size: 12px; font-weight: 600; color: #141A21; }
-    .toc-list a:hover { background: #FFF7ED; color: #C24D00; }
-    .toc-div { font-style: normal; font-weight: 400; color: #78716C; font-size: 11px; }
-    .toc-count { font-family: monospace; font-size: 11px; color: #C24D00; white-space: nowrap; }
-    .company-card { border: 1px solid #E4E4E0; background: #FBFBFA; border-radius: 6px; padding: 18px; space-y: 10px; }
-    .company-card h3 { margin: 0 0 8px; font-size: 14px; color: #141A21; }
-    .company-card p { margin: 0 0 10px; font-size: 11.5px; color: #44403C; }
-    .brand-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-    .brand-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #E4E4E0; background: #fff; border-radius: 99px; padding: 4px 10px; font-size: 11px; font-weight: 600; }
-    .brand-chip img { height: 14px; max-width: 44px; object-fit: contain; }
-    .brand-chip span.cnt { font-family: monospace; font-size: 10px; color: #78716C; }
+    .cover-center { padding: 54px 46px; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+    .cover-edition { font-family: monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: #C24D00; margin-bottom: 14px; }
+    .cover-title { font-size: 38px; line-height: 1.12; font-weight: 800; color: #141A21; letter-spacing: -0.025em; margin: 0 0 16px; max-width: 720px; }
+    .cover-rule { width: 72px; height: 4px; background: #141A21; margin-bottom: 20px; }
+    .cover-desc { font-size: 14.5px; line-height: 1.6; color: #44403C; max-width: 640px; margin: 0 0 26px; }
+    .cover-prepared { border-left: 3px solid #EA6A12; padding: 8px 16px; background: #FBFBFA; font-size: 12.5px; color: #141A21; max-width: 480px; margin-bottom: 26px; }
+    .cover-nav-links { display: flex; flex-wrap: wrap; gap: 10px; }
+    .cover-nav-links a { border: 1px solid #141A21; padding: 8px 16px; font-size: 11.5px; font-weight: 700; border-radius: 3px; color: #141A21; }
+    .cover-nav-links a.primary { background: #141A21; color: #fff; }
+    .cover-nav-links a:hover { border-color: #C24D00; color: #C24D00; }
+    .cover-nav-links a.primary:hover { background: #C24D00; border-color: #C24D00; color: #fff; }
+
+    .cover-footer { background: #F8F8F6; border-top: 1px solid #E4E4E0; padding: 22px 46px; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; font-size: 11px; color: #44403C; }
+    .cover-footer strong { color: #141A21; }
+
+    /* 2. PREFACE & PROCUREMENT GUIDE */
+    .editorial-page { padding: 38px 44px; page-break-after: always; break-after: page; }
+    .ed-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #141A21; padding-bottom: 10px; margin-bottom: 24px; }
+    .ed-header h2 { margin: 0; font-size: 22px; font-weight: 800; color: #141A21; }
+    .ed-kicker { font-family: monospace; font-size: 10px; font-weight: 700; color: #C24D00; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 3px; }
+    .ed-header-nav { font-family: monospace; font-size: 10.5px; color: #57534E; display: flex; gap: 10px; }
+    .ed-header-nav a:hover { color: #C24D00; text-decoration: underline; }
+
+    .preface-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+    .pref-block { margin-bottom: 18px; }
+    .pref-block h3 { margin: 0 0 6px; font-size: 13.5px; font-weight: 800; color: #141A21; border-left: 3px solid #EA6A12; padding-left: 9px; }
+    .pref-block p { margin: 0; font-size: 11.5px; color: #44403C; line-height: 1.6; }
+    .pref-list { margin: 6px 0 0 16px; padding: 0; font-size: 11.5px; color: #44403C; }
+    .pref-list li { margin-bottom: 5px; }
+    .pref-desk { background: #FBFBFA; border: 1px solid #E4E4E0; border-radius: 4px; padding: 16px; font-size: 11.5px; }
+    .pref-desk h4 { margin: 0 0 8px; font-size: 13px; color: #141A21; }
+
+    /* 3. STRUCTURED MASTER INDEX */
+    .toc-ul { list-style: none; padding: 0; margin: 0 0 24px; }
+    .toc-ul li a { display: flex; align-items: baseline; gap: 8px; padding: 6px 4px; border-bottom: 1px solid #F0F0EC; font-size: 12px; font-weight: 700; color: #141A21; }
+    .toc-ul li a:hover { color: #C24D00; background: #FFF7ED; }
+    .toc-left { flex-shrink: 0; }
+    .toc-sub { font-weight: 400; font-style: normal; color: #78716C; font-size: 11px; }
+    .toc-dots { flex: 1; border-bottom: 1px dotted #D6D3D1; margin: 0 4px; }
+    .toc-go { font-family: monospace; font-size: 11px; color: #C24D00; white-space: nowrap; }
+
+    .part-index-wrap { border-top: 2px solid #141A21; padding-top: 16px; }
+    .part-index-wrap h3 { margin: 0 0 4px; font-size: 14px; font-weight: 800; }
+    .idx-note { margin: 0 0 12px; font-size: 11px; color: #57534E; }
+    .part-index-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; }
+    .pi-item { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; padding: 3px 0; border-bottom: 1px dashed #E7E5E4; overflow: hidden; }
+    .pi-item:hover .pi-name { color: #C24D00; text-decoration: underline; }
+    .pi-mpn { font-weight: 700; color: #C24D00; flex-shrink: 0; min-width: 78px; }
+    .pi-name { color: #141A21; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* SECTION BANNERS & PRODUCT ENTRIES */
+    .cat-section, .guide-section { padding: 26px 44px 12px; }
+    .section-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: #141A21; color: #fff; padding: 14px 18px; border-left: 5px solid #EA6A12; margin-bottom: 16px; break-inside: avoid; break-after: avoid; }
+    .sb-kicker { font-family: monospace; font-size: 9.5px; color: #FF9E5E; letter-spacing: 0.1em; font-weight: 700; }
+    .sb-title { margin: 2px 0; font-size: 18px; font-weight: 800; }
+    .sb-sub { font-size: 11px; color: #D6D3D1; }
+    .sb-note { font-family: monospace; font-size: 10px; color: #FED7AA; margin-top: 3px; }
+    .sb-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; shrink: 0; }
+    .sb-logo { background: #fff; border-radius: 4px; padding: 4px 10px; }
+    .sb-logo img { height: 22px; max-width: 110px; object-fit: contain; display: block; }
+    .sb-links { display: flex; gap: 8px; font-family: monospace; font-size: 10px; }
+    .sb-links a { color: #D6D3D1; border: 1px solid rgba(255,255,255,0.22); padding: 2px 7px; border-radius: 3px; }
+    .sb-links a:hover { color: #fff; border-color: #EA6A12; }
+
+    .entries-stack { display: flex; flex-direction: column; gap: 16px; }
+    .entry-card { border: 1px solid #D6D3D1; border-radius: 4px; background: #fff; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
+    .entry-head { background: #F8F8F6; border-bottom: 1px solid #E4E4E0; padding: 7px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-family: monospace; font-size: 10.5px; }
+    .entry-head-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .entry-num { background: #141A21; color: #fff; font-weight: 700; padding: 1px 6px; border-radius: 2px; }
+    .entry-mpn { color: #C24D00; font-weight: 800; }
+    .entry-sku, .entry-hsn { color: #57534E; }
+    .entry-head-right { display: flex; align-items: center; gap: 8px; color: #57534E; font-family: inherit; font-size: 10.5px; font-weight: 600; }
+    .quiet-jump { font-family: monospace; font-size: 10px; color: #C24D00; margin-left: 4px; }
+
+    .entry-body { padding: 14px 16px; display: grid; gap: 16px; align-items: start; }
+    .entry-body.with-media { grid-template-columns: 155px 1fr; }
+    .entry-body.no-media { grid-template-columns: 1fr; }
+    .entry-media { display: flex; flex-direction: column; gap: 8px; }
+    .entry-img-frame { width: 155px; height: 140px; border: 1px solid #E4E4E0; background: #fff; border-radius: 4px; padding: 8px; display: flex; align-items: center; justify-content: center; }
+    .entry-img-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .media-actions { display: flex; flex-direction: column; gap: 4px; font-size: 10px; }
+    .media-actions a { display: block; text-align: center; border: 1px solid #E4E4E0; background: #FBFBFA; padding: 4px 6px; border-radius: 3px; font-weight: 600; color: #141A21; }
+    .media-actions a:hover { border-color: #C24D00; color: #C24D00; }
+
+    .entry-title { margin: 0 0 2px; font-size: 14.5px; font-weight: 800; color: #141A21; line-height: 1.25; }
+    .entry-title a:hover { color: #C24D00; text-decoration: underline; }
+    .entry-cat-line { font-size: 10px; color: #78716C; margin-bottom: 8px; }
+    .entry-desc { font-size: 11px; color: #44403C; line-height: 1.55; white-space: pre-line; margin-bottom: 10px; }
+
+    .entry-specs-wrap { margin-bottom: 9px; }
+    .sub-label { font-family: monospace; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #57534E; margin-bottom: 4px; }
+    table.entry-specs { width: 100%; border-collapse: collapse; border: 1px solid #E4E4E0; font-size: 10.5px; }
+    table.entry-specs th, table.entry-specs td { padding: 4.5px 9px; border-bottom: 1px solid #E7E5E4; text-align: left; vertical-align: top; }
+    table.entry-specs th { width: 34%; background: #FBFBFA; color: #57534E; font-weight: 600; }
+    table.entry-specs tr:last-child th, table.entry-specs tr:last-child td { border-bottom: none; }
+
+    .entry-compat { margin-bottom: 8px; font-size: 10.5px; }
+    .sub-label-inline { font-weight: 700; color: #141A21; margin-right: 6px; }
+    .compat-chip { display: inline-block; font-family: monospace; font-size: 10px; font-weight: 700; border: 1px solid #D6D3D1; background: #FBFBFA; padding: 1px 6px; border-radius: 3px; color: #C24D00; margin: 2px 2px 0 0; }
+    .entry-ordering { font-size: 10.5px; background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 6px 10px; color: #44403C; }
+
+    .entry-foot { background: #FBFBFA; border-top: 1px solid #E4E4E0; padding: 7px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; font-size: 10.5px; color: #57534E; }
+    .entry-foot strong { color: #141A21; }
+    .foot-links a { color: #C24D00; font-weight: 700; }
 
     /* Category Guide */
-    .guide-box { margin: 22px 32px 0; border: 1px solid #E4E4E0; border-radius: 6px; padding: 20px; background: #FBFBFA; break-inside: avoid; }
-    .guide-badge { font-family: monospace; font-size: 10px; font-weight: 700; color: #C24D00; text-transform: uppercase; letter-spacing: 0.08em; }
-    .guide-box h2 { margin: 4px 0 6px; font-size: 18px; }
-    .guide-lead { margin: 0 0 14px; color: #44403C; font-size: 12px; }
-    .guide-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .guide-type-card { background: #fff; border: 1px solid #E4E4E0; border-radius: 5px; padding: 12px; }
-    .gtc-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; }
-    .gtc-top span { background: #141A21; color: #fff; font-family: monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 3px; }
-    .gtc-spec { font-family: monospace; font-size: 11px; color: #C24D00; font-weight: 700; margin: 5px 0; }
-    .guide-type-card p { margin: 0 0 8px; font-size: 11px; color: #57534E; }
-    .gtc-links { display: flex; flex-wrap: wrap; gap: 5px; }
-    .gtc-links a { font-family: monospace; font-size: 10px; border: 1px solid #D6D3D1; background: #fff; padding: 2px 7px; border-radius: 3px; font-weight: 700; }
-    .gtc-links a:hover { border-color: #C24D00; color: #C24D00; }
-    .sizing-wrap h3 { margin: 8px 0 8px; font-size: 13px; }
+    .guide-intro { font-size: 12px; color: #44403C; margin: 0 0 14px; }
+    .guide-types-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .gt-card { border: 1px solid #D6D3D1; border-radius: 4px; padding: 11px; background: #FBFBFA; break-inside: avoid; }
+    .gt-head { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; }
+    .gt-head span { font-family: monospace; font-size: 9.5px; background: #141A21; color: #fff; padding: 1px 6px; border-radius: 2px; }
+    .gt-spec { font-family: monospace; font-size: 10.5px; color: #C24D00; font-weight: 700; margin: 4px 0; }
+    .gt-card p { margin: 0 0 6px; font-size: 10.5px; color: #57534E; }
+    .gt-models { font-size: 10px; color: #57534E; }
+    .gt-models a { font-family: monospace; font-weight: 700; color: #141A21; border: 1px solid #D6D3D1; background: #fff; padding: 1px 5px; border-radius: 2px; margin-left: 3px; }
+    .sub-h3 { margin: 12px 0 8px; font-size: 13px; font-weight: 800; }
 
-    /* Catalogue Sections & Cards */
-    .cat-section { padding: 24px 32px 10px; }
-    .sec-banner { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: #141A21; color: #fff; padding: 14px 18px; border-radius: 6px; margin-bottom: 14px; break-inside: avoid; }
-    .sec-kicker { font-family: monospace; font-size: 10px; color: #FF9E5E; font-weight: 700; letter-spacing: 0.08em; }
-    .sec-title { margin: 2px 0; font-size: 18px; font-weight: 800; }
-    .sec-sub { margin: 0; font-size: 11px; color: #D6D3D1; }
-    .sec-note { margin-top: 4px; font-size: 10px; font-family: monospace; color: #FDBA74; }
-    .sec-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; shrink: 0; }
-    .sec-logo-pill { background: #fff; border-radius: 4px; padding: 5px 10px; }
-    .sec-logo-pill img { height: 24px; max-width: 110px; object-fit: contain; display: block; }
-    .sec-nav-pills { display: flex; align-items: center; gap: 6px; font-size: 10px; font-family: monospace; }
-    .sec-count { background: rgba(255,255,255,0.14); padding: 2px 8px; border-radius: 3px; }
-    .back-toc { background: rgba(234,106,18,0.22); border: 1px solid rgba(234,106,18,0.5); color: #FFEDD5; padding: 2px 7px; border-radius: 3px; }
-
-    .prod-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .prod-card { border: 1px solid #E4E4E0; border-radius: 6px; padding: 12px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; break-inside: avoid; page-break-inside: avoid; }
-    .prod-top { display: flex; gap: 11px; align-items: flex-start; }
-    .prod-thumb { width: 72px; height: 72px; flex-shrink: 0; border: 1px solid #E4E4E0; border-radius: 4px; background: #FBFBFA; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 3px; }
-    .prod-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .prod-head { min-width: 0; flex: 1; }
-    .prod-meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; margin-bottom: 3px; font-family: monospace; font-size: 10px; }
-    .badge-mpn { background: #FFF7ED; color: #C24D00; border: 1px solid #FDBA74; padding: 1px 6px; border-radius: 3px; font-weight: 700; }
-    .sku-label { color: #78716C; }
-    .prod-title { margin: 0 0 3px; font-size: 12.5px; font-weight: 700; color: #141A21; line-height: 1.3; }
-    .prod-title a:hover { color: #C24D00; text-decoration: underline; }
-    .prod-sub { font-size: 10.5px; color: #57534E; }
-    .prod-desc { margin: 0; font-size: 11px; color: #44403C; line-height: 1.4; }
-    .spec-pills { display: flex; flex-wrap: wrap; gap: 4px; }
-    .spec-pill { font-size: 10px; background: #F5F5F4; border: 1px solid #E7E5E4; border-radius: 3px; padding: 2px 6px; color: #44403C; }
-    .spec-pill strong { color: #141A21; font-family: monospace; }
-    .prod-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; padding-top: 7px; border-top: 1px solid #F0F0EC; font-size: 10.5px; }
-    .price-tag { font-weight: 800; color: #141A21; }
-    .comm-sep { color: #57534E; font-family: monospace; font-size: 10px; }
-    .prod-links { display: flex; gap: 6px; }
-    .lnk-view { color: #141A21; border: 1px solid #D6D3D1; padding: 2px 7px; border-radius: 3px; font-weight: 600; font-size: 10px; }
-    .lnk-wa { background: #16A34A; color: #fff; padding: 2px 8px; border-radius: 3px; font-weight: 700; font-size: 10px; }
-
-    /* LineSheet Table */
-    table.linesheet { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 8px; }
-    table.linesheet th { background: #141A21; color: #fff; text-align: left; padding: 7px 9px; font-family: monospace; font-size: 10px; text-transform: uppercase; }
-    table.linesheet td { border-bottom: 1px solid #E4E4E0; padding: 7px 9px; vertical-align: top; }
+    /* Line-Sheet Table */
+    table.linesheet { width: 100%; border-collapse: collapse; font-size: 10.5px; border: 1px solid #D6D3D1; }
+    table.linesheet thead { display: table-header-group; }
+    table.linesheet th { background: #141A21; color: #fff; text-align: left; padding: 7px 8px; font-family: monospace; font-size: 9.5px; text-transform: uppercase; }
+    table.linesheet td { border-bottom: 1px solid #E4E4E0; padding: 6.5px 8px; vertical-align: top; }
     table.linesheet tr { break-inside: avoid; }
     table.linesheet tr:nth-child(even) td { background: #FBFBFA; }
     .row-link { font-weight: 700; color: #141A21; }
-    .row-link:hover { color: #C24D00; text-decoration: underline; }
-    .tbl-cta { display: inline-block; background: #C24D00; color: #fff; padding: 2px 8px; border-radius: 3px; font-weight: 700; font-size: 10px; }
+    .tbl-cta { font-weight: 700; color: #C24D00; }
 
-    /* Individual Product Datasheet */
-    .datasheet-wrap { padding: 26px 34px; }
-    .datasheet-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #141A21; padding-bottom: 12px; margin-bottom: 20px; }
-    .dh-logo { height: 34px; }
-    .dh-sub { font-size: 10px; font-family: monospace; color: #57534E; margin-top: 3px; }
-    .dh-right { text-align: right; }
-    .dh-brand-logo { height: 28px; max-width: 130px; object-fit: contain; display: block; margin-left: auto; margin-bottom: 4px; }
-    .dh-ref { font-size: 11px; font-family: monospace; color: #141A21; }
-    .ds-hero { display: grid; grid-template-columns: 1fr 220px; gap: 20px; margin-bottom: 18px; align-items: start; }
-    .ds-crumbs { font-size: 10.5px; color: #57534E; margin-bottom: 6px; }
-    .ds-crumbs a { color: #C24D00; font-weight: 600; }
-    .ds-title { margin: 0 0 8px; font-size: 22px; line-height: 1.2; font-weight: 800; }
-    .ds-short { margin: 0 0 12px; font-size: 12.5px; color: #44403C; }
-    .ds-comm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; background: #FBFBFA; border: 1px solid #E4E4E0; border-radius: 5px; padding: 10px; margin-bottom: 12px; }
-    .ds-comm-grid span { display: block; font-size: 9.5px; color: #78716C; text-transform: uppercase; }
-    .ds-comm-grid strong { font-size: 11.5px; color: #141A21; }
-    .ds-price-box { border: 1px solid #FDBA74; background: #FFF7ED; border-radius: 5px; padding: 11px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
-    .ds-price-lbl { font-size: 10px; font-family: monospace; text-transform: uppercase; color: #C24D00; font-weight: 700; }
-    .ds-price-val { font-size: 14px; font-weight: 800; color: #141A21; }
-    .ds-cta-group { display: flex; flex-wrap: wrap; gap: 6px; }
-    .btn-wa, .btn-mail, .btn-web { padding: 6px 11px; border-radius: 4px; font-size: 11px; font-weight: 700; }
-    .btn-wa { background: #16A34A; color: #fff; }
-    .btn-mail { background: #141A21; color: #fff; }
-    .btn-web { border: 1px solid #141A21; background: #fff; color: #141A21; }
-    .ds-img-box { border: 1px solid #E4E4E0; border-radius: 6px; padding: 10px; background: #fff; display: flex; align-items: center; justify-content: center; height: 210px; }
-    .ds-img-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .ds-highlights { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
-    .ds-hl-item { border: 1px solid #E4E4E0; border-radius: 4px; padding: 8px; background: #FBFBFA; }
-    .ds-hl-item span { display: block; font-size: 9.5px; color: #78716C; }
-    .ds-hl-item strong { font-size: 11px; font-family: monospace; color: #141A21; }
-    .ds-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .ds-block { margin-bottom: 14px; }
-    .ds-block h3 { margin: 0 0 8px; font-size: 13px; font-weight: 800; border-bottom: 1px solid #E4E4E0; padding-bottom: 4px; }
-    .ds-para { margin: 0; font-size: 11px; color: #44403C; white-space: pre-line; }
-    .ordering-box { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 5px; padding: 12px; }
-    .ordering-box ul { margin: 6px 0 0 16px; padding: 0; font-size: 11px; color: #44403C; }
-    .ordering-box li { margin-bottom: 4px; }
-    table.spec-table { width: 100%; border-collapse: collapse; border: 1px solid #E4E4E0; font-size: 11px; }
-    table.spec-table th, table.spec-table td { padding: 6px 8px; border-bottom: 1px solid #E4E4E0; text-align: left; }
-    table.spec-table th { width: 40%; background: #FBFBFA; color: #57534E; font-weight: 600; }
-    .compat-list { display: flex; flex-direction: column; gap: 5px; }
-    .compat-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid #E4E4E0; border-radius: 4px; background: #FBFBFA; font-size: 11px; }
-    .compat-row:hover { border-color: #C24D00; }
-    .compat-row .arrow { color: #C24D00; font-weight: 700; }
+    /* Single Product Full Datasheet */
+    .datasheet-wrap { padding: 30px 44px; }
+    .ds-top-strip { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 3px solid #141A21; padding-bottom: 12px; margin-bottom: 18px; }
+    .ds-eyebrow { font-family: monospace; font-size: 10px; font-weight: 700; color: #C24D00; letter-spacing: 0.1em; }
+    .ds-h2 { margin: 4px 0 6px; font-size: 22px; font-weight: 800; color: #141A21; }
+    .ds-meta-line { font-size: 11px; color: #57534E; }
+    .ds-brand-logo { height: 34px; max-width: 140px; object-fit: contain; }
+    .ds-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 22px; margin-bottom: 20px; }
+    .ds-lead { font-size: 12.5px; color: #44403C; margin: 0 0 12px; }
+    .ds-hl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+    .ds-hl-box { border: 1px solid #E4E4E0; background: #FBFBFA; padding: 7px 10px; border-radius: 3px; }
+    .ds-hl-box span { display: block; font-size: 9.5px; color: #78716C; }
+    .ds-hl-box strong { font-size: 11px; font-family: monospace; color: #141A21; }
+    .ds-photo-box { border: 1px solid #D6D3D1; border-radius: 4px; padding: 12px; background: #fff; height: 220px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+    .ds-photo-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .ds-commercial-card { border: 1px solid #D6D3D1; background: #FBFBFA; border-radius: 4px; padding: 12px; }
+    .dcc-row { display: flex; justify-content: space-between; font-size: 11px; padding: 5px 0; border-bottom: 1px solid #E7E5E4; }
+    .dcc-row:last-of-type { border-bottom: none; }
+    .dcc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .btn-solid { background: #141A21; color: #fff; padding: 6px 11px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
+    .btn-outline { border: 1px solid #141A21; color: #141A21; background: #fff; padding: 5px 10px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
+    .ds-bottom-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 22px; }
+    .ds-section-block h3 { margin: 0 0 8px; font-size: 13px; font-weight: 800; border-bottom: 1px solid #E4E4E0; padding-bottom: 4px; }
+    .guide-ul { margin: 6px 0 0 16px; padding: 0; font-size: 11px; color: #44403C; }
+    .guide-ul li { margin-bottom: 5px; }
+    .compat-stack { display: flex; flex-direction: column; gap: 5px; }
+    .compat-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; border: 1px solid #E4E4E0; padding: 5px 8px; border-radius: 3px; background: #FBFBFA; }
 
     /* Commercial Terms Back Page */
-    .terms-page { margin-top: 22px; background: #141A21; color: #fff; padding: 28px 34px; page-break-before: auto; break-inside: avoid; }
-    .terms-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 22px; margin-top: 14px; font-size: 11.5px; color: #D6D3D1; }
-    .terms-page h2 { margin: 0; font-size: 18px; color: #fff; }
-    .terms-page h3 { margin: 0 0 8px; font-size: 13px; color: #FF9E5E; }
-    .terms-page ul { margin: 0 0 0 16px; padding: 0; }
-    .terms-page li { margin-bottom: 5px; }
-    .terms-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.14); display: flex; justify-content: space-between; font-size: 10.5px; color: #A8A29E; }
+    .terms-wrap { margin-top: 28px; background: #141A21; color: #fff; padding: 30px 44px; break-inside: avoid; }
+    .terms-cols { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 26px; margin-top: 14px; font-size: 11px; color: #D6D3D1; }
+    .terms-cols h3 { margin: 0 0 8px; font-size: 12.5px; color: #FF9E5E; }
+    .terms-cols ul { margin: 0 0 0 16px; padding: 0; }
+    .terms-cols li { margin-bottom: 5px; }
+    .terms-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.16); display: flex; justify-content: space-between; font-size: 10.5px; color: #A8A29E; }
     .terms-foot a { color: #FF9E5E; font-weight: 700; }
 
     @media print {
-      body { background: #fff; }
-      .toolbar { display: none !important; }
-      .container { margin: 0; max-width: none; box-shadow: none; border-radius: 0; }
-      .cat-section { padding: 10px 0 6px; }
-      .toc-page { padding: 14px 4px; }
-      .cover { min-height: 268mm; }
+      html, body { background: #fff; }
+      .studio-bar { display: none !important; }
+      .book-sheet { margin: 0; max-width: none; box-shadow: none; }
+      .cover-page { min-height: 296mm; }
+      .editorial-page { padding: 4px 0; }
+      .cat-section, .guide-section, .datasheet-wrap { padding: 6px 0; }
+      .terms-wrap { padding: 24px 28px; }
     }
     @media (max-width: 760px) {
-      .toc-grid, .prod-grid, .guide-types, .ds-hero, .ds-cols, .ds-highlights, .cover-stats, .terms-grid { grid-template-columns: 1fr; }
-      .cover { padding: 28px 22px; min-height: auto; }
+      .preface-cols, .part-index-grid, .entry-body.with-media, .guide-types-grid, .ds-split, .ds-bottom-grid, .terms-cols { grid-template-columns: 1fr; }
+      .cover-band, .cover-center, .cover-footer, .editorial-page, .cat-section { padding-left: 20px; padding-right: 20px; }
     }
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <div class="toolbar-left">
-      <strong>${escHtml(companyName)} Catalogue Studio</strong>
-      <span class="toolbar-badge">${escHtml(rows.length.toLocaleString("en-IN"))} / ${escHtml(
-        totalMatching.toLocaleString("en-IN")
-      )} SKUs</span>
-      <a href="#toc" style="color:#D6D3D1;text-decoration:underline;">Table of Contents</a>
-      <a href="#terms" style="color:#D6D3D1;text-decoration:underline;">Terms &amp; RFQ Desk</a>
+  <div class="studio-bar">
+    <div class="studio-bar-nav">
+      <strong>${escHtml(companyName)}</strong>
+      <a href="#cover">Cover</a>
+      <a href="#preface">Preface</a>
+      <a href="#index">Master Index</a>
+      <a href="#terms">Commercial Terms</a>
     </div>
-    <div class="toolbar-actions">
-      <button type="button" onclick="window.print()" class="tb-btn tb-primary">Save as PDF / Print</button>
+    <div class="studio-bar-actions">
+      <button type="button" onclick="window.print()" class="s-btn s-btn-primary">Print / Save as PDF</button>
       <a href="${escHtml(
         `/api/admin/catalogue?scope=${encodeURIComponent(params.scope)}${
           params.slug ? `&slug=${encodeURIComponent(params.slug)}` : ""
@@ -1052,168 +1181,183 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
         }&limit=${safeLimit}&offset=${safeOffset}${
           params.preparedFor ? `&preparedFor=${encodeURIComponent(params.preparedFor)}` : ""
         }&download=1`
-      )}" class="tb-btn">Download Standalone HTML</a>
+      )}" class="s-btn">Download Offline HTML</a>
     </div>
   </div>
 
-  <div class="container">
+  <main class="book-sheet">
     <!-- COVER PAGE -->
-    <header id="cover" class="cover">
-      <div class="cover-top">
-        <div>
-          <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" class="cover-logo" />
-          <div style="font-size:11px;color:#A8A29E;margin-top:8px;font-family:monospace;">
-            B2B INDUSTRIAL MRO • AGRI • SPECIAL ITEMS SUPPLY PARTNER
-          </div>
-        </div>
+    <header id="cover" class="cover-page">
+      <div class="cover-band">
+        <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" class="cover-company-logo" />
         ${
           targetBrandLogoUri
-            ? `<div class="cover-brand-box"><img src="${escHtml(targetBrandLogoUri)}" alt="${escHtml(
+            ? `<div class="cover-oem-plaque"><img src="${escHtml(targetBrandLogoUri)}" alt="${escHtml(
                 targetBrand?.name || ""
-              )}" class="cover-brand-logo" /></div>`
+              )}" /></div>`
             : ""
         }
       </div>
 
-      <div class="cover-mid">
-        <div class="cover-accent"></div>
-        <div class="cover-kicker">${escHtml(params.scope.toUpperCase())} PROCUREMENT CATALOGUE • ${escHtml(
-          generatedDate
-        )}</div>
-        <h1 class="cover-h1">${escHtml(fullDocTitle)}</h1>
-        <p class="cover-tagline">${escHtml(
-          targetBrand?.description ||
-            targetCategory?.description ||
-            companyTagline
+      <div class="cover-center">
+        <div class="cover-edition">OFFICIAL TECHNICAL &amp; PROCUREMENT CATALOGUE • ${editionYear} EDITION</div>
+        <h1 class="cover-title">${escHtml(fullDocTitle)}</h1>
+        <div class="cover-rule"></div>
+        <p class="cover-desc">${escHtml(
+          targetBrand?.description || targetCategory?.description || companyTagline
         )}</p>
         ${
           params.preparedFor
-            ? `<div class="prepared-pill">Prepared For: <strong>${escHtml(params.preparedFor)}</strong></div>`
+            ? `<div class="cover-prepared">Prepared Specifically For: <strong>${escHtml(
+                params.preparedFor
+              )}</strong></div>`
             : ""
         }
-        <div class="cover-stats">
-          <div class="cover-stat"><span>Catalogued SKUs</span><strong>${escHtml(
-            totalMatching.toLocaleString("en-IN")
-          )}</strong></div>
-          <div class="cover-stat"><span>Brands Included</span><strong>${escHtml(
-            brandStatsMap.size || 1
-          )}</strong></div>
-          <div class="cover-stat"><span>Dispatch Scope</span><strong>Pan-India GST</strong></div>
-          <div class="cover-stat"><span>Lead Time</span><strong>Confirmed on PO</strong></div>
-        </div>
-
-        <div class="cover-jump">
-          <a href="#toc">Browse Table of Contents ↓</a>
-          ${
-            params.scope === "category" && categoryGuide
-              ? `<a href="#category-guide" class="sec">Technical Sizing Guide ↓</a>`
-              : ""
-          }
-          <a href="#terms" class="sec">RFQ Desk &amp; Terms ↓</a>
+        <div class="cover-nav-links">
+          <a href="#preface" class="primary">01. Read Preface →</a>
+          <a href="#index">02. Browse Master Index →</a>
+          <a href="#terms">03. Procurement Terms →</a>
         </div>
       </div>
 
-      <div class="cover-bottom">
-        <div><strong>${escHtml(companyName)}</strong> — ${escHtml(companyAddress)}</div>
-        <div>WhatsApp / Call: <strong>${escHtml(companyPhone)}</strong> • Email: <strong>${escHtml(
-          companyEmail
-        )}</strong></div>
+      <div class="cover-footer">
+        <div>
+          <strong>${escHtml(companyName)}</strong><br/>
+          ${escHtml(companyAddress)}
+        </div>
+        <div style="text-align:right;">
+          <strong>Phone / WhatsApp:</strong> ${escHtml(companyPhone)}<br/>
+          <strong>Email:</strong> ${escHtml(companyEmail)} &nbsp;|&nbsp; ${escHtml(origin)}
+        </div>
       </div>
     </header>
 
-    <!-- COMPANY PROFILE & INTERACTIVE TABLE OF CONTENTS -->
-    <section id="toc" class="toc-page">
-      <div class="page-head">
-        <img src="${escHtml(darkLogoData)}" alt="${escHtml(companyName)}" />
-        <div class="page-head-meta">${escHtml(docTitle)} • Click any section to jump directly</div>
+    <!-- PREFACE & PROCUREMENT HANDBOOK -->
+    <section id="preface" class="editorial-page">
+      <div class="ed-header">
+        <div>
+          <div class="ed-kicker">FOREWORD &amp; SOURCING OVERVIEW</div>
+          <h2>Corporate Preface</h2>
+        </div>
+        <div class="ed-header-nav">
+          <a href="#cover">↑ Cover</a>
+          <a href="#index">Master Index →</a>
+        </div>
       </div>
 
-      <div class="toc-grid">
+      <div class="preface-cols">
         <div>
-          <h2 style="margin:0 0 6px;font-size:18px;">Interactive Table of Contents</h2>
-          <p style="margin:0;font-size:11.5px;color:#57534E;">Click any section below to navigate inside this PDF / HTML catalogue.</p>
-          <ul class="toc-list">
-            ${tocLinksHtml}
-            <li><a href="#terms"><span>Commercial Terms, GST Billing &amp; Consolidated RFQ Desk</span><span class="toc-count">Jump →</span></a></li>
-          </ul>
+          <div class="pref-block">
+            <h3>1. About ${escHtml(companyName)}</h3>
+            <p>${escHtml(
+              companyName
+            )} is a multi-brand industrial Maintenance, Repair &amp; Operations (MRO), agricultural engineering, and technical specialty supplier headquartered in Ranigunj, Secunderabad, Telangana. We support manufacturing plants, aerospace/defence workshops, OEM assemblies, utilities, and contractors across India with consolidated GST tax invoicing.</p>
+          </div>
+
+          <div class="pref-block">
+            <h3>2. OEM Authenticity &amp; Sourcing Standards</h3>
+            <p>${
+              targetBrand
+                ? targetBrand.sourcingType === "authorized"
+                  ? `Products featured in this edition are supplied as ${targetBrand.name} genuine equipment with manufacturer batch traceability.`
+                  : `All ${targetBrand.name} items in this catalogue are genuine OEM products procured through ${companyName}'s verified B2B wholesale network (${targetBrand.sourcingNote || "independent B2B supply partner"}).`
+                : `Every brand in this catalogue is sourced through verified B2B industrial distribution channels with manufacturer part traceability, HSN tax classification, and optional calibration documentation.`
+            }</p>
+          </div>
         </div>
 
-        <div class="company-card">
-          <h3>About ${escHtml(companyName)}</h3>
-          <p>Multi-brand wholesale industrial &amp; MRO supply partner based in Secunderabad, Telangana, delivering across India with full GST tax invoicing, verified OEM sourcing, and responsive technical support.</p>
-          <p><strong>Phone / WhatsApp:</strong> ${escHtml(companyPhone)}<br/><strong>Email:</strong> ${escHtml(
-            companyEmail
-          )}<br/><strong>Website:</strong> <a href="${escHtml(origin)}" target="_blank" style="color:#C24D00;text-decoration:underline;">${escHtml(
-            origin
-          )}</a>${companyGstin ? `<br/><strong>GSTIN:</strong> ${escHtml(companyGstin)}` : ""}</p>
+        <div>
+          <div class="pref-block">
+            <h3>3. How to Read This Catalogue</h3>
+            <ul class="pref-list">
+              <li><strong>MPN (Manufacturer Part No.):</strong> Original factory code used for technical verification and connector/system fitment.</li>
+              <li><strong>Seller SKU &amp; HSN:</strong> Internal procurement reference and GST tariff code for compliant PO generation.</li>
+              <li><strong>Lead Time:</strong> Confirmed upon order based on live warehouse stock and factory scheduling.</li>
+              <li><strong>Interactive Hyperlinks:</strong> Click any entry in the Master Index to jump straight to that model, or click live product links for direct WhatsApp / Email RFQ submission.</li>
+            </ul>
+          </div>
 
-          ${
-            brandStatsMap.size > 1
-              ? `<h3 style="margin-top:14px;">Brands Covered (${brandStatsMap.size})</h3>
-                 <div class="brand-chips">${Array.from(brandStatsMap.values())
-                   .slice(0, 32)
-                   .map(
-                     (b) => `<a href="#${escHtml(b.anchorId)}" class="brand-chip">
-                       ${b.logoUri ? `<img src="${escHtml(b.logoUri)}" alt="${escHtml(b.name)}" />` : ""}
-                       <span>${escHtml(b.name)}</span>
-                       <span class="cnt">(${b.count})</span>
-                     </a>`
-                   )
-                   .join("")}</div>`
-              : ""
-          }
+          <div class="pref-desk">
+            <h4>Direct Procurement &amp; Quotation Desk</h4>
+            <p style="margin:0 0 6px;">Share your Bill of Materials (BOM) or MPN list for consolidated B2B GST pricing and scheduled dispatch.</p>
+            <div><strong>WhatsApp / Phone:</strong> ${escHtml(companyPhone)}</div>
+            <div><strong>RFQ Inbox:</strong> ${escHtml(companyEmail)}</div>
+            ${companyGstin ? `<div><strong>GSTIN:</strong> ${escHtml(companyGstin)}</div>` : ""}
+          </div>
         </div>
       </div>
     </section>
 
-    ${categoryGuideHtml}
-
-    <!-- PRODUCT CATALOGUE BODY -->
-    ${sectionsHtml}
-
-    <!-- COMMERCIAL TERMS & ENQUIRY DESK -->
-    <footer id="terms" class="terms-page">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+    <!-- STRUCTURED MASTER INDEX -->
+    <section id="index" class="editorial-page">
+      <div class="ed-header">
         <div>
-          <h2>Commercial Terms &amp; Bulk Procurement Desk</h2>
-          <p style="margin:4px 0 0;font-size:11.5px;color:#A8A29E;">Consolidated multi-brand quotations on a single GST invoice from ${escHtml(
-            companyName
-          )}.</p>
+          <div class="ed-kicker">NAVIGABLE DOCUMENT DIRECTORY</div>
+          <h2>Master Index</h2>
         </div>
-        <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" style="height:34px;" />
+        <div class="ed-header-nav">
+          <a href="#preface">← Preface</a>
+          <a href="#terms">Commercial Terms →</a>
+        </div>
       </div>
 
-      <div class="terms-grid">
+      <ul class="toc-ul">
+        <li><a href="#preface"><span class="toc-left">00. Corporate Preface &amp; Procurement Guidelines</span><span class="toc-dots"></span><span class="toc-go">Preface →</span></a></li>
+        ${
+          params.scope === "category" && categoryGuide
+            ? `<li><a href="#category-guide"><span class="toc-left">Technical Sizing &amp; Type Selection Guide</span><span class="toc-dots"></span><span class="toc-go">Guide →</span></a></li>`
+            : ""
+        }
+        ${sectionTocRows}
+        <li><a href="#terms"><span class="toc-left">Commercial Terms, GST Billing &amp; Contact Desk</span><span class="toc-dots"></span><span class="toc-go">Terms →</span></a></li>
+      </ul>
+
+      ${partNumberIndexHtml}
+    </section>
+
+    ${categoryGuideHtml}
+
+    <!-- PRODUCT CATALOGUE ENTRIES -->
+    ${sectionsHtml}
+
+    <!-- COMMERCIAL TERMS BACK COVER -->
+    <footer id="terms" class="terms-wrap">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
         <div>
-          <h3>Standard Commercial Terms</h3>
+          <div style="font-family:monospace;font-size:10px;color:#FF9E5E;letter-spacing:0.1em;font-weight:700;">ORDERING &amp; DISPATCH TERMS</div>
+          <h2 style="margin:3px 0 0;font-size:18px;color:#fff;">Commercial Terms &amp; Direct RFQ Desk</h2>
+        </div>
+        <img src="${escHtml(mainLogoData)}" alt="${escHtml(companyName)}" style="height:32px;" />
+      </div>
+
+      <div class="terms-cols">
+        <div>
+          <h3>Standard Terms of Supply</h3>
           <ul>
-            <li>Quotations remain valid for <strong>7 days</strong> from issue date unless otherwise agreed in writing.</li>
-            <li>Delivery &amp; dispatch schedules are <strong>Confirmed Upon Order</strong> based on real-time OEM / warehouse allocation.</li>
-            <li>GST charged as applicable per HSN classification with full B2B GST credit invoicing.</li>
-            <li>Before ordering precision/MIL-spec tools or configured pneumatic actuators, please verify exact part numbers, accessories (e.g. turret heads, mounting kits), and calibration requirements with our team.</li>
+            <li>Formal quotations remain valid for <strong>7 calendar days</strong> unless stated otherwise in writing.</li>
+            <li><strong>Delivery Lead Time:</strong> Always confirmed upon order confirmation based on inventory or OEM dispatch schedule.</li>
+            <li>Applicable GST is billed separately with full B2B tax invoice credit across India.</li>
+            <li>Please confirm accessories, calibration certificates, mounting brackets, or voltage ratings prior to Purchase Order issuance.</li>
           </ul>
         </div>
         <div>
-          <h3>Direct Quote &amp; Order Desk</h3>
+          <h3>Ordering &amp; Contact Details</h3>
           <p style="margin:0 0 8px;"><strong>${escHtml(companyName)}</strong><br/>${escHtml(companyAddress)}</p>
-          <p style="margin:0 0 10px;">WhatsApp / Phone: <strong>${escHtml(companyPhone)}</strong><br/>Email: <strong>${escHtml(
+          <p style="margin:0;">Phone / WhatsApp: <strong>${escHtml(companyPhone)}</strong><br/>Email: <strong>${escHtml(
             companyEmail
-          )}</strong><br/>Catalog URL: <a href="${escHtml(origin)}" target="_blank" style="color:#FF9E5E;text-decoration:underline;">${escHtml(
+          )}</strong><br/>Website: <a href="${escHtml(origin)}" target="_blank" style="color:#FF9E5E;text-decoration:underline;">${escHtml(
             origin
           )}</a></p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="https://wa.me/${escHtml(whatsappNumber)}" target="_blank" style="background:#16A34A;color:#fff;padding:6px 12px;border-radius:4px;font-weight:700;font-size:11px;">Chat on WhatsApp ↗</a>
-            <a href="mailto:${escHtml(companyEmail)}" style="background:#EA6A12;color:#fff;padding:6px 12px;border-radius:4px;font-weight:700;font-size:11px;">Email BOM / RFQ ↗</a>
-          </div>
         </div>
       </div>
 
       <div class="terms-foot">
-        <span>Generated on ${escHtml(generatedDate)} • ${escHtml(companyName)}</span>
-        <span><a href="#cover">↑ Cover</a> &nbsp;|&nbsp; <a href="#toc">↑ Table of Contents</a></span>
+        <span>Edition ${editionYear} • Issued ${escHtml(generatedDate)} • ${escHtml(companyName)}</span>
+        <span><a href="#cover">↑ Cover</a> &nbsp;|&nbsp; <a href="#preface">↑ Preface</a> &nbsp;|&nbsp; <a href="#index">↑ Master Index</a></span>
       </div>
     </footer>
-  </div>
+  </main>
+
   ${
     params.autoPrint
       ? `<script>window.addEventListener("load", function(){ setTimeout(function(){ window.print(); }, 350); });</script>`

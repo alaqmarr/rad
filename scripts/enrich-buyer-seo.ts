@@ -54,6 +54,33 @@ async function main() {
     throw new Error("Failed to create pneumatic-cylinders category.");
   }
 
+  // 1b. Deactivate misclassified "3m" (3-meter tape/vibrator shaft) items mistakenly loaded under 3m-industrial
+  const [brand3m] = await db
+    .select()
+    .from(brands)
+    .where(eq(brands.slug, "3m-industrial"))
+    .limit(1);
+  let cleaned3m = 0;
+  if (brand3m) {
+    const items3m = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.brandId, brand3m.id), eq(products.isActive, true)));
+    const invalid3mIds = items3m
+      .filter((p) => !/^(?:3m|scotch(?:-brite|-weld)?)\b/i.test(p.name.trim()))
+      .map((p) => p.id);
+    if (invalid3mIds.length > 0) {
+      await db
+        .update(products)
+        .set({ isActive: false, updatedAt: new Date().toISOString() })
+        .where(inArray(products.id, invalid3mIds));
+      cleaned3m = invalid3mIds.length;
+    }
+  }
+  if (cleaned3m > 0) {
+    console.log(`Deactivated ${cleaned3m} misclassified non-3M (3-meter shaft/tape) items under 3m-industrial.`);
+  }
+
   // 2. Move Festo cylinder / linear drive / actuator SKUs into pneumatic-cylinders cleanly
   const [festoBrand] = await db
     .select()
