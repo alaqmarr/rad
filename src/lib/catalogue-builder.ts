@@ -994,12 +994,36 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
           )
           .join("");
 
+  const slugPart = params.slug ? `-${params.slug}` : "";
+  const volPart =
+    totalMatching > safeLimit ? `-part-${Math.floor(safeOffset / safeLimit) + 1}` : "";
+  const filename = `radiant-${params.scope}-catalogue${slugPart}${volPart}.html`.replace(
+    /[^a-z0-9._-]+/gi,
+    "-"
+  );
+
+  const rawPdfBase =
+    params.scope === "product" && rows[0]
+      ? `Radiant - ${rows[0].product.sku.replace(/\*/g, "")} - ${(
+          htmlToCleanText(rows[0].product.name, true) || rows[0].product.name
+        )
+          .replace(/\*/g, "")
+          .slice(0, 65)} Datasheet`
+      : `Radiant - ${docTitle}${
+          totalMatching > safeLimit ? ` Part ${Math.floor(safeOffset / safeLimit) + 1}` : ""
+        }`;
+  const defaultPdfTitle = rawPdfBase
+    .replace(/[*?"<>|]+/g, "")
+    .replace(/[\/\\:]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escHtml(fullDocTitle)} | ${escHtml(companyName)}</title>
+  <title>${escHtml(defaultPdfTitle)}</title>
   <style>
     @page {
       size: A4 portrait;
@@ -1392,7 +1416,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     </div>
     <div class="studio-bar-actions">
       <span id="imgStatus" class="s-status">Preparing high-res assets...</span>
-      <button type="button" onclick="window.print()" class="s-btn s-btn-primary">Print / Save as PDF</button>
+      <button type="button" onclick="window.__printCatalogue && window.__printCatalogue()" class="s-btn s-btn-primary">Print / Save as PDF</button>
       <a href="${escHtml(
         `/api/admin/catalogue?scope=${encodeURIComponent(params.scope)}${
           params.slug ? `&slug=${encodeURIComponent(params.slug)}` : ""
@@ -1625,6 +1649,15 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   <script>
     (function () {
+      var pdfTitle = ${JSON.stringify(defaultPdfTitle)};
+      document.title = pdfTitle;
+      window.__printCatalogue = function () {
+        document.title = pdfTitle;
+        window.print();
+      };
+      window.addEventListener("beforeprint", function () {
+        document.title = pdfTitle;
+      });
       var imgs = Array.prototype.slice.call(document.images || []);
       var statusEl = document.getElementById("imgStatus");
       function waitImg(img) {
@@ -1639,7 +1672,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
         if (statusEl) statusEl.textContent = "Ready (" + imgs.length + " assets loaded)";
         ${
           params.autoPrint
-            ? 'setTimeout(function () { window.print(); }, 250);'
+            ? 'setTimeout(function () { window.__printCatalogue(); }, 250);'
             : ""
         }
       });
@@ -1648,19 +1681,11 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 </body>
 </html>`;
 
-  const slugPart = params.slug ? `-${params.slug}` : "";
-  const volPart =
-    totalMatching > safeLimit ? `-part-${Math.floor(safeOffset / safeLimit) + 1}` : "";
-  const filename = `radiant-${params.scope}-catalogue${slugPart}${volPart}.html`.replace(
-    /[^a-z0-9._-]+/gi,
-    "-"
-  );
-
   return {
     html,
     filename,
     totalMatching,
     renderedCount: rows.length,
-    title: fullDocTitle,
+    title: defaultPdfTitle,
   };
 }
