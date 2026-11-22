@@ -1,4 +1,8 @@
-export function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
+export function toCsv(
+  headers: string[],
+  rows: Array<Array<unknown>>,
+  options?: { bom?: boolean }
+): string {
   const escapeCell = (val: unknown): string => {
     const str = val === null || val === undefined ? "" : String(val);
     if (/[",\r\n]/.test(str)) {
@@ -11,8 +15,9 @@ export function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
     headers.map(escapeCell).join(","),
     ...rows.map((r) => r.map(escapeCell).join(",")),
   ];
-  // UTF-8 BOM so Microsoft Excel opens Unicode/INR cleanly
-  return "\uFEFF" + lines.join("\r\n");
+  const body = lines.join("\r\n");
+  // UTF-8 BOM defaults to true for Excel; disable cleanly for strict CSV importers like Justdial
+  return options?.bom === false ? body : "\uFEFF" + body;
 }
 
 export function parseCsv(input: string): { headers: string[]; rows: Record<string, string>[] } {

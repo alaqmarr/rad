@@ -1,5 +1,5 @@
 import React from "react";
-import { sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import {
   db,
   products,
@@ -10,6 +10,7 @@ import {
   aiConversations,
   whatsappLogs,
 } from "@/db";
+import { getSiteSettings } from "@/lib/settings";
 import { DataImportExportClient } from "@/components/DataImportExportClient";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,9 @@ export default async function AdminDataPage() {
     [enqCount],
     [aiCount],
     [waCount],
+    activeBrands,
+    activeCategories,
+    settings,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(products),
     db.select({ count: sql<number>`count(*)` }).from(brands),
@@ -31,6 +35,17 @@ export default async function AdminDataPage() {
     db.select({ count: sql<number>`count(*)` }).from(enquiries),
     db.select({ count: sql<number>`count(*)` }).from(aiConversations),
     db.select({ count: sql<number>`count(*)` }).from(whatsappLogs),
+    db
+      .select({ slug: brands.slug, name: brands.name })
+      .from(brands)
+      .where(eq(brands.isActive, true))
+      .orderBy(asc(brands.name)),
+    db
+      .select({ slug: categories.slug, name: categories.name })
+      .from(categories)
+      .where(eq(categories.isActive, true))
+      .orderBy(asc(categories.name)),
+    getSiteSettings(),
   ]);
 
   const counts = {
@@ -43,6 +58,16 @@ export default async function AdminDataPage() {
     whatsapp_logs: Number(waCount?.count || 0),
   };
 
+  const defaultCompanyName = settings["company_name"] || "Radiant Industrial Co.";
+  const defaultCompanyContact = [
+    settings["contact_address"] ||
+      "Sai Vaishnavi Complex, Ranigunj, Secunderabad 500003, Telangana, India",
+    settings["contact_phone"] || "",
+    settings["contact_email"] || "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
   return (
     <div className="space-y-6 w-full">
       <div>
@@ -50,11 +75,17 @@ export default async function AdminDataPage() {
           Data Import, Export &amp; Bulk Cleanup
         </h1>
         <p className="text-sm text-stone-600 mt-1">
-          Export products, brands, categories, and enquiries to Excel-compatible CSV or JSON, edit in bulk, re-import to upsert, or bulk-clear records safely.
+          Export products, brands, categories, and enquiries to Excel-compatible CSV or JSON, download Justdial upload-ready CSVs, or bulk-import updates.
         </p>
       </div>
 
-      <DataImportExportClient counts={counts} />
+      <DataImportExportClient
+        counts={counts}
+        justdialBrands={activeBrands}
+        justdialCategories={activeCategories}
+        defaultCompanyName={defaultCompanyName}
+        defaultCompanyContact={defaultCompanyContact}
+      />
     </div>
   );
 }

@@ -6,11 +6,20 @@ import { useDropzone } from "react-dropzone";
 import { Download, UploadCloud, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle, Trash2 } from "lucide-react";
 import { sileo } from "sileo";
 import { purgeEntityDataAction, type PurgeEntityType } from "@/app/admin/actions";
+import { JustdialExportPanel, type JustdialFilterOption } from "@/components/JustdialExportPanel";
 
 export function DataImportExportClient({
   counts,
+  justdialBrands,
+  justdialCategories,
+  defaultCompanyName,
+  defaultCompanyContact,
 }: {
   counts: Record<PurgeEntityType, number>;
+  justdialBrands: JustdialFilterOption[];
+  justdialCategories: JustdialFilterOption[];
+  defaultCompanyName: string;
+  defaultCompanyContact: string;
 }) {
   const router = useRouter();
   const [entity, setEntity] = useState<"products" | "brands" | "categories">("products");
@@ -258,6 +267,14 @@ export function DataImportExportClient({
           </div>
         )}
       </div>
+
+      {/* Justdial Catalog Export */}
+      <JustdialExportPanel
+        brands={justdialBrands}
+        categories={justdialCategories}
+        defaultCompanyName={defaultCompanyName}
+        defaultCompanyContact={defaultCompanyContact}
+      />
 
       {/* Bulk Clear / Purge All Records */}
       <div className="lg:col-span-12 rounded-md border border-red-200 bg-white p-6 space-y-4">
