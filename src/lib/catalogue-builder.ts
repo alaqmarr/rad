@@ -1288,8 +1288,8 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     .sb-links a { color: #D6D3D1; border: 1px solid rgba(255,255,255,0.22); padding: 1.5px 6px; border-radius: 2px; }
 
     .entries-stack { display: flex; flex-direction: column; gap: 16px; }
-    .entry-card { border: 1px solid #D6D3D1; border-radius: 4px; background: #fff; break-inside: avoid; page-break-inside: avoid; overflow: hidden; }
-    .entry-head { background: #F8F8F6; border-bottom: 1px solid #E4E4E0; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-family: monospace; font-size: 9.5px; }
+    .entry-card { border: 1px solid #D6D3D1; border-radius: 4px; background: #fff; break-inside: avoid; page-break-inside: avoid; }
+    .entry-head { background: #F8F8F6; border-bottom: 1px solid #E4E4E0; border-radius: 3px 3px 0 0; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-family: monospace; font-size: 9.5px; }
     .entry-head-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
     .entry-num { background: #141A21; color: #fff; font-weight: 700; padding: 1px 6px; border-radius: 2px; }
     .entry-mpn { color: #C24D00; font-weight: 800; word-break: break-all; }
@@ -1324,7 +1324,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
     .compat-chip { display: inline-block; font-family: monospace; font-size: 9.5px; font-weight: 700; border: 1px solid #D6D3D1; background: #FBFBFA; padding: 1px 6px; border-radius: 3px; color: #C24D00; margin: 2px 2px 0 0; }
     .entry-ordering { font-size: 10px; background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 6px 9px; color: #44403C; }
 
-    .entry-foot { background: #FBFBFA; border-top: 1px solid #E4E4E0; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; color: #57534E; }
+    .entry-foot { background: #FBFBFA; border-top: 1px solid #E4E4E0; border-radius: 0 0 3px 3px; padding: 6px 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; color: #57534E; }
     .entry-foot strong { color: #141A21; }
     .foot-links a { color: #C24D00; font-weight: 700; }
 
@@ -1415,7 +1415,8 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       <a href="#terms">Commercial Terms</a>
     </div>
     <div class="studio-bar-actions">
-      <span id="imgStatus" class="s-status">Preparing high-res assets...</span>
+      <span id="imgStatus" class="s-status">Preparing assets...</span>
+      <span style="font-size:11px;color:#D6D3D1;">Destination: <strong style="color:#fff;">Save as PDF</strong> (keeps clickable links)</span>
       <button type="button" onclick="window.__printCatalogue && window.__printCatalogue()" class="s-btn s-btn-primary">Print / Save as PDF</button>
       <a href="${escHtml(
         `/api/admin/catalogue?scope=${encodeURIComponent(params.scope)}${

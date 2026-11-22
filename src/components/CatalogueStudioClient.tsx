@@ -452,7 +452,7 @@ export function CatalogueStudioClient({
         {/* Export Actions */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-stone-600">
-            Use <strong>Save as PDF / Print</strong> for clean A4 multi-page PDFs with working internal TOC bookmarks, or <strong>Download HTML</strong> for interactive offline sharing via WhatsApp/Email.
+            In the Print dialog, select <strong>Destination → Save as PDF</strong> (do <em>not</em> use Microsoft Print to PDF) so every Table of Contents, Index, and product hyperlink stays clickable inside the PDF.
           </div>
           <div className="flex flex-wrap gap-2.5">
             <a
