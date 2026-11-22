@@ -1,7 +1,7 @@
 import React from "react";
 import Link from "next/link";
 import { asc, desc } from "drizzle-orm";
-import { FileSpreadsheet } from "lucide-react";
+import { BookOpen, FileSpreadsheet } from "lucide-react";
 import { db, products, divisions, categories, brands } from "@/db";
 import { ProductsManager } from "@/components/ProductsManager";
 
@@ -27,13 +27,22 @@ export default async function AdminProductsPage() {
           </p>
         </div>
 
-        <Link
-          href="/admin/data#justdial-export"
-          className="inline-flex items-center gap-2 rounded bg-[#141A21] px-4 py-2 text-xs font-bold text-white hover:bg-[#C24D00] transition-colors shrink-0"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          Export Catalog for Justdial
-        </Link>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Link
+            href="/admin/catalogue"
+            className="inline-flex items-center gap-2 rounded bg-[#C24D00] px-4 py-2 text-xs font-bold text-white hover:bg-[#9E3E00] transition-colors"
+          >
+            <BookOpen className="w-4 h-4" />
+            Catalogue Studio (PDF)
+          </Link>
+          <Link
+            href="/admin/data#justdial-export"
+            className="inline-flex items-center gap-2 rounded bg-[#141A21] px-4 py-2 text-xs font-bold text-white hover:bg-stone-800 transition-colors"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Export for Justdial
+          </Link>
+        </div>
       </div>
 
       <ProductsManager
