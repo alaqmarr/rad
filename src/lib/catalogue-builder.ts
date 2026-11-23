@@ -519,15 +519,13 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   const safeLimit =
     params.limit && params.limit > 0
-      ? Math.min(params.limit, 3000)
+      ? params.limit
       : params.scope === "product"
       ? 1
-      : params.scope === "master"
-      ? 1200
-      : 2000;
+      : null;
   const safeOffset = Math.max(0, params.offset || 0);
 
-  const rows = await db
+  const baseQuery = db
     .select({
       product: products,
       division: divisions,
@@ -545,9 +543,14 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
       asc(brands.name),
       desc(products.isFeatured),
       asc(products.name)
-    )
-    .limit(safeLimit)
-    .offset(safeOffset);
+    );
+
+  const rows =
+    safeLimit !== null
+      ? await baseQuery.limit(safeLimit).offset(safeOffset)
+      : safeOffset > 0
+      ? await baseQuery.limit(Math.max(1, totalMatching)).offset(safeOffset)
+      : await baseQuery;
 
   if (params.scope === "product" && rows.length === 0) {
     throw new Error(`Product not found: ${params.slug}`);
@@ -614,13 +617,16 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
 
   const slugSetInCatalogue = new Set(rows.map((r) => r.product.slug));
 
-  const partSuffix =
-    totalMatching > safeLimit
-      ? ` — Part ${Math.floor(safeOffset / safeLimit) + 1} (${safeOffset + 1}–${Math.min(
-          safeOffset + rows.length,
-          totalMatching
-        )} of ${totalMatching.toLocaleString("en-IN")})`
-      : "";
+  const isPartialVolume =
+    safeLimit !== null && (safeOffset > 0 || rows.length < totalMatching);
+  const volumeIndex = isPartialVolume ? Math.floor(safeOffset / safeLimit) + 1 : 1;
+
+  const partSuffix = isPartialVolume
+    ? ` — Part ${volumeIndex} (${safeOffset + 1}–${Math.min(
+        safeOffset + rows.length,
+        totalMatching
+      )} of ${totalMatching.toLocaleString("en-IN")})`
+    : "";
 
   const docTitle =
     params.scope === "brand" && targetBrand
@@ -1260,8 +1266,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
           .join("");
 
   const slugPart = params.slug ? `-${params.slug}` : "";
-  const volPart =
-    totalMatching > safeLimit ? `-part-${Math.floor(safeOffset / safeLimit) + 1}` : "";
+  const volPart = isPartialVolume ? `-part-${volumeIndex}` : "";
   const filename = `radiant-${params.scope}-catalogue${slugPart}${volPart}.html`.replace(
     /[^a-z0-9._-]+/gi,
     "-"
@@ -1274,9 +1279,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
         )
           .replace(/\*/g, "")
           .slice(0, 65)} Datasheet`
-      : `Radiant - ${docTitle}${
-          totalMatching > safeLimit ? ` Part ${Math.floor(safeOffset / safeLimit) + 1}` : ""
-        }`;
+      : `Radiant - ${docTitle}${isPartialVolume ? ` Part ${volumeIndex}` : ""}`;
   const defaultPdfTitle = rawPdfBase
     .replace(/[*?"<>|]+/g, "")
     .replace(/[\/\\:]+/g, "-")
@@ -1583,7 +1586,7 @@ export async function buildBrandedCatalogueHtml(params: CatalogueBuildParams): P
           params.slug ? `&slug=${encodeURIComponent(params.slug)}` : ""
         }&layout=${layout}&images=${includeImages ? "1" : "0"}&prices=${
           showPrices ? "1" : "0"
-        }&limit=${safeLimit}&offset=${safeOffset}${
+        }${safeLimit !== null ? `&limit=${safeLimit}` : ""}&offset=${safeOffset}${
           params.preparedFor ? `&preparedFor=${encodeURIComponent(params.preparedFor)}` : ""
         }&download=1`
       )}" class="s-btn">Download Offline HTML</a>

@@ -61,7 +61,7 @@ export function CatalogueStudioClient({
   const [includeImages, setIncludeImages] = useState(true);
   const [showPrices, setShowPrices] = useState(false);
   const [preparedFor, setPreparedFor] = useState("");
-  const [batchSize, setBatchSize] = useState(1200);
+  const [batchSize, setBatchSize] = useState(0);
 
   const [brandSearch, setBrandSearch] = useState("");
   const [productQuery, setProductQuery] = useState("");
@@ -259,17 +259,17 @@ export function CatalogueStudioClient({
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#141A21] mb-1">
-                  Split Volume Size (for Large Brands)
+                  Volume Size / Pagination
                 </label>
                 <select
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value))}
                   className="w-full rounded border border-stone-300 bg-white px-3 py-2 text-xs text-[#141A21] outline-none focus:border-[#C24D00]"
                 >
+                  <option value={0}>All Products — Complete Catalogue (No Limit)</option>
                   <option value={1200}>1,200 SKUs per PDF/HTML volume</option>
                   <option value={500}>500 SKUs per PDF/HTML volume</option>
                   <option value={2500}>2,500 SKUs per PDF/HTML volume</option>
-                  <option value={0}>Single combined file (up to 2,000 SKUs)</option>
                 </select>
               </div>
             </div>
@@ -295,13 +295,14 @@ export function CatalogueStudioClient({
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#141A21] mb-1">
-                  Split Volume Size (for Large Categories)
+                  Volume Size / Pagination
                 </label>
                 <select
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value))}
                   className="w-full rounded border border-stone-300 bg-white px-3 py-2 text-xs text-[#141A21] outline-none focus:border-[#C24D00]"
                 >
+                  <option value={0}>All Products — Complete Catalogue (No Limit)</option>
                   <option value={1200}>1,200 SKUs per PDF/HTML volume</option>
                   <option value={500}>500 SKUs per PDF/HTML volume</option>
                   <option value={2000}>2,000 SKUs per PDF/HTML volume</option>
@@ -343,15 +344,16 @@ export function CatalogueStudioClient({
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#141A21] mb-1">
-                  Volume Size
+                  Volume Size / Pagination
                 </label>
                 <select
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value))}
                   className="w-full rounded border border-stone-300 bg-white px-3 py-2 text-xs text-[#141A21] outline-none focus:border-[#C24D00]"
                 >
-                  <option value={1200}>1,200 SKUs per Volume (Recommended for PDF)</option>
-                  <option value={500}>500 SKUs per Volume (Fastest PDF Print)</option>
+                  <option value={0}>All Products — Complete Catalogue (No Limit)</option>
+                  <option value={1200}>1,200 SKUs per Volume</option>
+                  <option value={500}>500 SKUs per Volume</option>
                   <option value={2500}>2,500 SKUs per Volume</option>
                 </select>
               </div>
@@ -574,7 +576,6 @@ export function CatalogueStudioClient({
                     targetScope: "brand",
                     targetSlug: b.slug,
                     print: true,
-                    limit: Math.min(2000, Math.max(500, b.productCount)),
                     offset: 0,
                   })}
                   target="_blank"
@@ -588,7 +589,6 @@ export function CatalogueStudioClient({
                     targetScope: "brand",
                     targetSlug: b.slug,
                     download: true,
-                    limit: Math.min(2000, Math.max(500, b.productCount)),
                     offset: 0,
                   })}
                   className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-[#141A21] py-1.5 text-[11px] font-bold text-white hover:bg-stone-800"
