@@ -223,10 +223,12 @@ export default async function ProductDetailPage({
     item: productUrl,
   });
 
-  const productJsonLd = {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
+  const priceValidUntil = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const primaryEntityJsonLd = hasVerifiedPrice
+    ? {
         "@type": "Product",
         name: cleanName,
         sku: product.sku,
@@ -241,22 +243,74 @@ export default async function ProductDetailPage({
           name: s.label,
           value: s.value,
         })),
-        ...(hasVerifiedPrice
-          ? {
-              offers: {
-                "@type": "Offer",
-                url: productUrl,
-                priceCurrency: "INR",
-                price: product.basePrice,
-                availability: schemaAvailability,
-                seller: {
-                  "@type": "Organization",
-                  name: companyName,
-                },
+        offers: {
+          "@type": "Offer",
+          url: productUrl,
+          priceCurrency: "INR",
+          price: Number(product.basePrice).toFixed(2),
+          priceValidUntil,
+          availability: schemaAvailability,
+          itemCondition: "https://schema.org/NewCondition",
+          seller: {
+            "@type": "Organization",
+            name: companyName,
+          },
+          shippingDetails: {
+            "@type": "OfferShippingDetails",
+            shippingDestination: {
+              "@type": "DefinedRegion",
+              addressCountry: "IN",
+            },
+            deliveryTime: {
+              "@type": "ShippingDeliveryTime",
+              handlingTime: {
+                "@type": "QuantitativeValue",
+                minValue: 1,
+                maxValue: 3,
+                unitCode: "DAY",
               },
-            }
-          : {}),
-      },
+              transitTime: {
+                "@type": "QuantitativeValue",
+                minValue: 2,
+                maxValue: 7,
+                unitCode: "DAY",
+              },
+            },
+          },
+          hasMerchantReturnPolicy: {
+            "@type": "MerchantReturnPolicy",
+            applicableCountry: "IN",
+            returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
+            merchantReturnDays: 7,
+            returnMethod: "https://schema.org/ReturnByMail",
+            returnFees: "https://schema.org/ReturnFeesCustomerResponsibility",
+          },
+        },
+      }
+    : {
+        "@type": "ItemPage",
+        name: cleanName,
+        url: productUrl,
+        description: cleanDescription || cleanShortDesc || undefined,
+        primaryImageOfPage: {
+          "@type": "ImageObject",
+          url: imageUrl,
+        },
+        mainEntity: {
+          "@type": "Thing",
+          name: cleanName,
+          identifier: product.sku,
+          alternateName: mpn !== product.sku ? mpn : undefined,
+          description: cleanShortDesc || cleanDescription || undefined,
+          image: imagesList,
+          url: productUrl,
+        },
+      };
+
+  const productJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      primaryEntityJsonLd,
       {
         "@type": "BreadcrumbList",
         itemListElement: breadcrumbItems,

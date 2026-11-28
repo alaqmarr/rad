@@ -36,7 +36,7 @@ async function applySqlitePragmas(c: Client): Promise<void> {
       PRAGMA temp_store = MEMORY;
       PRAGMA cache_size = -65536;
       PRAGMA mmap_size = 268435456;
-      PRAGMA busy_timeout = 5000;
+      PRAGMA busy_timeout = 15000;
       PRAGMA foreign_keys = ON;
     `);
   } catch {
@@ -51,9 +51,7 @@ export function ensureDbReady(): Promise<void> {
   return globalForDb.dbPragmasPromise;
 }
 
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.libsqlClient = client;
-}
+globalForDb.libsqlClient = client;
 
 // Kick off PRAGMA tuning immediately at module initialization
 void ensureDbReady();

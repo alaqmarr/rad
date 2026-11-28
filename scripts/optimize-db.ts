@@ -118,11 +118,16 @@ async function main() {
   console.log("[optimize-db] Rebuilding FTS5 index across all products...");
   await client.execute(`INSERT INTO products_fts(products_fts) VALUES('rebuild');`);
 
-  console.log("[optimize-db] Running ANALYZE, VACUUM, and PRAGMA optimize...");
+  const runVacuum = process.argv.includes("--vacuum");
+  console.log(
+    `[optimize-db] Running ANALYZE, PRAGMA optimize${runVacuum ? ", VACUUM" : ""} (non-blocking WAL checkpoint)...`
+  );
   await client.execute(`ANALYZE;`);
-  await client.execute(`VACUUM;`);
+  if (runVacuum) {
+    await client.execute(`VACUUM;`);
+  }
   await client.execute(`PRAGMA optimize;`);
-  await client.execute(`PRAGMA wal_checkpoint(TRUNCATE);`);
+  await client.execute(`PRAGMA wal_checkpoint(PASSIVE);`);
 
   const stats = await client.execute(`
     SELECT
