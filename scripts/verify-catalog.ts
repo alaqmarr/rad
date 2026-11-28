@@ -146,9 +146,14 @@ async function main() {
   const dirtyBrands = auditRows.filter((r) => r.status === "DIRTY_TEXT" || r.status === "DIRTY_LEAD");
 
   let ftsRows = 0;
+  let totalProductsAll = allProducts.length;
   try {
-    const ftsRes = await client.execute(`SELECT COUNT(*) as cnt FROM products_fts`);
+    const [ftsRes, prodRes] = await Promise.all([
+      client.execute(`SELECT COUNT(*) as cnt FROM products_fts`),
+      client.execute(`SELECT COUNT(*) as cnt FROM products`),
+    ]);
     ftsRows = Number(ftsRes.rows[0]?.cnt || 0);
+    totalProductsAll = Number(prodRes.rows[0]?.cnt || allProducts.length);
   } catch {
     ftsRows = -1;
   }
@@ -175,16 +180,23 @@ async function main() {
     lowCoverageBrands: lowBrands.map((r) => `${r.slug} (${r.totalProducts} prods, ${r.imgPct}% imgs)`),
     dirtyBrands: dirtyBrands.map((r) => r.slug),
     totalActiveProducts: allProducts.length,
+    totalProductsAll,
     productsWithImages: allProducts.filter((p) => Boolean(p.primaryImageUrl?.trim())).length,
     ftsIndexedRows: ftsRows,
-    ftsSynced: ftsRows === allProducts.length,
+    ftsSynced: ftsRows === totalProductsAll,
     ...(imageSampleCheck ? { imageSampleCheck } : {}),
   };
 
   console.log("\n=== SUMMARY ===");
   console.log(JSON.stringify(summary, null, 2));
 
-  if (strict && (emptyBrands.length > 0 || dirtyBrands.length > 0 || (ftsRows >= 0 && ftsRows !== allProducts.length))) {
+  if (
+    strict &&
+    (emptyBrands.length > 0 ||
+      lowBrands.length > 0 ||
+      dirtyBrands.length > 0 ||
+      (ftsRows >= 0 && ftsRows !== totalProductsAll))
+  ) {
     console.error("\n[verify-catalog] FAILED strict verification!");
     process.exit(1);
   }

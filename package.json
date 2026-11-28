@@ -9,7 +9,11 @@
     "lint": "eslint",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/db/seed.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "catalog:sync": "tsx scripts/sync-catalog.ts",
+    "catalog:sync:full": "tsx scripts/sync-catalog.ts --full",
+    "catalog:verify": "tsx scripts/verify-catalog.ts --strict",
+    "catalog:optimize": "tsx scripts/optimize-db.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.825.0",
